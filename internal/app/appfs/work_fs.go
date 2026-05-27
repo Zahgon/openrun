@@ -12,9 +12,4 @@ type WorkFs struct {
 var _ WritableFS = (*WorkFs)(nil)
 
 // NewWorkFs creates a new work file system
-func NewWorkFs(dir string, fs WritableFS) *WorkFs {
-	return &WorkFs{
-		Root:       dir,
-		WritableFS: fs,
-	}
-}
+func NewWorkFs(dir string, fs WritableFS) *WorkFs { _ = "STUB: not implemented"; return nil }

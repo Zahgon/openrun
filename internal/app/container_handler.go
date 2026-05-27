@@ -4,28 +4,13 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"io/fs"
-	"math"
-	"net/http"
-	"net/url"
-	"os"
 	"os/exec"
-	"path"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/appfs"
 	"github.com/openrundev/openrun/internal/container"
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
@@ -87,753 +72,167 @@ func NewContainerHandler(logger *types.Logger, app *App, containerFile string,
 	serverConfig *types.ServerConfig, configPort int32, lifetime, scheme, health, buildDir string, sourceFS appfs.ReadableFS,
 	paramMap map[string]string, containerConfig types.Container, stripAppPath bool,
 	containerVolumes []string, secretsAllowed [][]string, cargs map[string]any, bindings []*types.Binding) (*ContainerHandler, error) {
-
-	var containerManager container.ContainerManager
-	var err error
-	containerManagerKind := "command"
-	switch serverConfig.System.ContainerCommand {
-	case types.CONTAINER_KUBERNETES:
-		containerManagerKind = "kubernetes"
-		containerManager, err = container.NewKubernetesCM(logger, serverConfig, &app.AppConfig, app.AppRunPath, app.Id)
-		if err != nil {
-			return nil, fmt.Errorf("error creating kubernetes container manager: %w", err)
-		}
-	default:
-		containerManager = container.NewCommandCM(logger, serverConfig, app.Id, app.AppRunPath)
-	}
-	containerManager = container.WrapContainerManager(containerManager, containerManagerKind)
-
-	image := ""
-	volumes := []string{}
-	if strings.HasPrefix(containerFile, types.CONTAINER_SOURCE_IMAGE_PREFIX) {
-		// Using an image
-		image = containerFile[len(types.CONTAINER_SOURCE_IMAGE_PREFIX):]
-	} else {
-		// Using a container file
-		data, err := sourceFS.ReadFile(containerFile)
-		if err != nil {
-			return nil, fmt.Errorf("error reading container file %s : %w", containerFile, err)
-		}
-
-		result, err := parser.Parse(bytes.NewReader(data))
-		if err != nil {
-			return nil, fmt.Errorf("error parsing container file %s : %w", containerFile, err)
-		}
-
-		var filePort int32
-		// Loop through the parsed result to find the EXPOSE and VOLUME instructions
-		for _, child := range result.AST.Children {
-			switch strings.ToUpper(child.Value) {
-			case "EXPOSE":
-				portVal, err := strconv.ParseInt(strings.TrimSpace(child.Next.Value), 10, 32)
-				if err != nil {
-					// Can fail if value is an arg like $PORT
-					logger.Warn().Msgf("Error parsing EXPOSE port %s in container file %s", child.Next.Value, containerFile)
-				} else {
-					filePort = int32(portVal)
-				}
-			case "VOLUME":
-				v := extractVolumes(child)
-				volumes = append(volumes, v...)
-			}
-		}
-
-		if configPort == 0 {
-			// No port configured in app config, use the one from the container file
-			configPort = filePort
-		}
-	}
-
-	volumes = dedupVolumes(append(volumes, containerVolumes...))
-	logger.Debug().Msgf("volumes %v %s", volumes, containerFile)
-
-	if configPort == 0 && lifetime != types.CONTAINER_LIFETIME_COMMAND {
-		return nil, fmt.Errorf("port not specified in app config and in container file %s. Either "+
-			"add a EXPOSE directive in %s or add port number in app config", containerFile, containerFile)
-	}
-
-	// Evaluate secrets in the paramMap
-	for k, v := range paramMap {
-		val, err := app.secretEvalFunc(secretsAllowed, app.AppConfig.Security.DefaultSecretsProvider, v)
-		if err != nil {
-			return nil, fmt.Errorf("error evaluating secret for %s: %w", k, err)
-		}
-		paramMap[k] = val
-	}
-
-	delete(paramMap, "secrets") // remove the secrets entry, which is a list of secrets the container is allowed to use
-
-	cargs_map := map[string]string{}
-	for k, v := range cargs {
-		cargs_map[k] = fmt.Sprintf("%v", v)
-	}
-	for k, v := range app.Metadata.ContainerArgs {
-		cargs_map[k] = v
-	}
-
-	// Evaluate secrets in the build args
-	for k, v := range cargs_map {
-		val, err := app.secretEvalFunc(secretsAllowed, app.AppConfig.Security.DefaultSecretsProvider, v)
-		if err != nil {
-			return nil, fmt.Errorf("error evaluating secret for %s: %w", k, err)
-		}
-		cargs_map[k] = val
-	}
-
-	h := &ContainerHandler{
-		Logger:          logger,
-		app:             app,
-		containerFile:   containerFile,
-		image:           image,
-		serverConfig:    serverConfig,
-		port:            configPort,
-		lifetime:        lifetime,
-		scheme:          scheme,
-		buildDir:        buildDir,
-		sourceFS:        sourceFS,
-		manager:         containerManager,
-		paramMap:        paramMap,
-		containerConfig: containerConfig,
-		stateLock:       sync.RWMutex{},
-		currentState:    ContainerStateUnknown,
-		stripAppPath:    stripAppPath,
-		cargs:           cargs_map,
-		bindings:        bindings,
-	}
-
-	h.envMap, h.envMapHash, err = h.getEnvMapAndHash()
-	if err != nil {
-		return nil, fmt.Errorf("error getting env map hash: %w", err)
-	}
-
-	if containerConfig.IdleShutdownSecs > 0 &&
-		(!app.IsDev || containerConfig.IdleShutdownDevApps) {
-		// Start the idle shutdown check
-		h.idleShutdownTicker = time.NewTicker(time.Duration(containerConfig.IdleShutdownSecs) * time.Second)
-		go h.idleAppShutdown(context.Background())
-	}
-
-	h.health = h.GetHealthUrl(health)
-	if containerConfig.StatusCheckIntervalSecs > 0 && h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
-		// Start the health check goroutine
-		h.healthCheckTicker = time.NewTicker(time.Duration(containerConfig.StatusCheckIntervalSecs) * time.Second)
-		go h.healthChecker(context.Background())
-	}
-
-	excludeGlob := []string{}
-	templateFiles, err := fs.Glob(sourceFS, "*.go.html")
-	if err != nil {
-		return nil, err
-	}
-
-	if len(templateFiles) != 0 { // a.UsesHtmlTemplate is set in initRouter, so it cannot be used here
-		excludeGlob = app.codeConfig.Routing.ContainerExclude
-	}
-	h.excludeGlob = excludeGlob
-
-	volumeInfo := make([]*container.VolumeInfo, 0, len(volumes))
-	for _, vol := range volumes {
-		volInfo, err := h.parseVolumeString(vol)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing volume %s: %w", vol, err)
-		}
-		volumeInfo = append(volumeInfo, volInfo)
-	}
-	h.volumeInfo = volumeInfo
-
-	return h, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+// Using an image
+
+// Using a container file
+
+// Loop through the parsed result to find the EXPOSE and VOLUME instructions
+
+// Can fail if value is an arg like $PORT
+
+// No port configured in app config, use the one from the container file
+
+// Evaluate secrets in the paramMap
+
+// remove the secrets entry, which is a list of secrets the container is allowed to use
+
+// Evaluate secrets in the build args
+
+// Start the idle shutdown check
+
+// Start the health check goroutine
+
+// a.UsesHtmlTemplate is set in initRouter, so it cannot be used here
 
 const (
 	VOL_PREFIX_SECRET = "cl_secret:"
 )
 
-func dedupVolumes(volumes []string) []string {
-	seenStripped := map[string]bool{}
-	for _, v := range volumes {
-		if strings.HasPrefix(v, VOL_PREFIX_SECRET) {
-			stripped := v[len(VOL_PREFIX_SECRET):]
-			seenStripped[stripped] = true
-		}
-	}
+func dedupVolumes(volumes []string) []string { _ = "STUB: not implemented"; return nil }
 
-	ret := []string{}
-	seen := map[string]bool{}
-	for _, v := range volumes {
-		if seenStripped[v] {
-			// skip the stripped string, keep only the unstripped version
-			continue
-		}
-		if seen[v] {
-			// already seen, skip
-			continue
-		}
-		seen[v] = true
-		ret = append(ret, v)
-	}
+// skip the stripped string, keep only the unstripped version
 
-	return ret
-}
+// already seen, skip
 
-func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
-	for range h.idleShutdownTicker.C {
-		if h.currentState != ContainerStateRunning {
-			continue
-		}
-		idleTimeSecs := time.Now().Unix() - h.app.lastRequestTime.Load()
-		if idleTimeSecs < int64(h.containerConfig.IdleShutdownSecs) {
-			// Not idle
-			h.Trace().Msgf("App %s not idle, last request %d seconds ago", h.app.Id, idleTimeSecs)
-			continue
-		}
+func (h *ContainerHandler) idleAppShutdown(ctx context.Context) { _ = "STUB: not implemented"; return }
 
-		if h.proxyTracker != nil {
-			sent, recv := h.proxyTracker.GetRollingTotals()
-			totalBytes := sent + recv
-			if totalBytes >= uint64(h.containerConfig.IdleBytesHighWatermark) {
-				h.Trace().Msgf("App %s not idle, bytes sent %d, bytes received %d, total bytes %d at high watermark %d",
-					h.app.Id, sent, recv, totalBytes, h.containerConfig.IdleBytesHighWatermark)
-				continue
-			}
-			h.Info().Msgf("App %s idle, bytes sent %d, bytes received %d, total bytes %d below high watermark %d",
-				h.app.Id, sent, recv, totalBytes, h.containerConfig.IdleBytesHighWatermark)
-		}
+// Not idle
 
-		h.Debug().Msgf("Shutting down idle app %s after %d seconds", h.app.Id, idleTimeSecs)
+// Notify the server to close the app so that it gets reinitialized on next API call
 
-		fullHash, err := h.getAppHash()
-		if err != nil {
-			h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
-			break
-		}
+func (h *ContainerHandler) healthChecker(ctx context.Context) { _ = "STUB: not implemented"; return }
 
-		if h.app.notifyClose != nil {
-			// Notify the server to close the app so that it gets reinitialized on next API call
-			h.app.notifyClose <- h.app.AppPathDomain()
-		}
+// wait for 1 minute to let the app start up
 
-		h.stateLock.Lock()
-		h.currentState = ContainerStateIdleShutdown
+// Notify the server to close the app so that it gets reinitialized on next API call
 
-		err = h.manager.StopContainer(ctx, container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate()))
-		if err != nil {
-			h.Error().Err(err).Msgf("Error stopping idle app %s", h.app.Id)
-		}
-		h.stateLock.Unlock()
-		break
-	}
+func extractVolumes(node *parser.Node) []string { _ = "STUB: not implemented"; return nil }
 
-	h.Debug().Msgf("Idle checker stopped for app %s", h.app.Id)
-}
-
-func (h *ContainerHandler) healthChecker(ctx context.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			h.Error().Msgf("Recovered from panic in health checker: %s", r)
-		}
-	}()
-
-	time.Sleep(60 * time.Second) // wait for 1 minute to let the app start up
-	h.Debug().Msgf("Health checker started for app %s", h.app.Id)
-	fullHash, err := h.getAppHash()
-	if err != nil {
-		h.Error().Err(err).Msgf("Error getting app hash for %s", h.app.Id)
-		return
-	}
-	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate())
-	for range h.healthCheckTicker.C {
-		err := h.WaitForHealth(h.containerConfig.StatusHealthAttempts, containerName, "")
-		if err == nil {
-			continue
-		}
-		h.Info().Msgf("Health check failed for app %s: %s", h.app.Id, err)
-
-		if h.app.notifyClose != nil {
-			// Notify the server to close the app so that it gets reinitialized on next API call
-			h.app.notifyClose <- h.app.AppPathDomain()
-		}
-
-		h.stateLock.Lock()
-		h.currentState = ContainerStateHealthFailure
-
-		err = h.manager.StopContainer(ctx, container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate()))
-		if err != nil {
-			h.Error().Err(err).Msgf("Error stopping app %s after health failure", h.app.Id)
-		}
-		h.stateLock.Unlock()
-		break
-	}
-
-	h.Debug().Msgf("Health checker stopped for app %s", h.app.Id)
-}
-
-func extractVolumes(node *parser.Node) []string {
-	ret := []string{}
-	for node.Next != nil {
-		node = node.Next
-		ret = append(ret, types.StripQuotes(node.Value))
-	}
-	return ret
-}
-
-func (h *ContainerHandler) GetProxyUrl() string {
-	return fmt.Sprintf("%s://%s", h.scheme, h.hostNamePort)
-}
+func (h *ContainerHandler) GetProxyUrl() string { _ = "STUB: not implemented"; return "" }
 
 func (h *ContainerHandler) GetHealthUrl(appHealthUrl string) string {
-	healthUrl := h.containerConfig.HealthUrl
-	if appHealthUrl != "" && appHealthUrl != "/" {
-		// Health check URL is specified in the app code, use that
-		healthUrl = appHealthUrl
-	}
-
-	if healthUrl == "" {
-		healthUrl = "/"
-	} else if healthUrl[0] != '/' {
-		healthUrl = "/" + healthUrl
-	}
-	return healthUrl
+	_ = "STUB: not implemented"
+	return ""
 }
 
-func getMapHash(input map[string]string) (string, error) {
-	keys := []string{}
-	for k := range input {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys) // Sort the keys to ensure consistent hash
+// Health check URL is specified in the app code, use that
 
-	hashBuilder := strings.Builder{}
-	for _, paramName := range keys {
-		paramVal := input[paramName]
-		// Default to string
-		hashBuilder.WriteString(paramName)
-		hashBuilder.WriteByte(0)
-		hashBuilder.WriteString(paramVal)
-		hashBuilder.WriteByte(0)
-	}
+func getMapHash(input map[string]string) (string, error) { _ = "STUB: not implemented"; return "", nil }
 
-	sha := sha256.New()
-	if _, err := sha.Write([]byte(hashBuilder.String())); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(sha.Sum(nil)), nil
-}
+// Sort the keys to ensure consistent hash
+
+// Default to string
 
 func getSliceHash(input []string) (string, error) {
-	slices.Sort(input) // Sort the keys to ensure consistent hash
-
-	hashBuilder := strings.Builder{}
-	for _, v := range input {
-		hashBuilder.WriteString(v)
-		hashBuilder.WriteByte(0)
-	}
-
-	sha := sha256.New()
-	if _, err := sha.Write([]byte(hashBuilder.String())); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(sha.Sum(nil)), nil
+	_ = "STUB: not implemented"
+	// Sort the keys to ensure consistent hash
+	return "", nil
 }
 
-func (h *ContainerHandler) getEnvMap() map[string]string {
-	ret := make(map[string]string)
-	for paramName, paramVal := range h.paramMap {
-		ret[paramName] = paramVal
-	}
+func (h *ContainerHandler) getEnvMap() map[string]string { _ = "STUB: not implemented"; return nil }
 
-	pathValue := h.app.Path
-	if pathValue == "/" {
-		pathValue = ""
-	}
-	ret["CL_APP_PATH"] = pathValue
+// Add the port number to use into the env
+// Using PORT instead of CL_PORT since that seems to be the most common convention across apps
 
-	// Add the port number to use into the env
-	// Using PORT instead of CL_PORT since that seems to be the most common convention across apps
-	ret["PORT"] = strconv.FormatInt(int64(h.port), 10)
-
-	ret["CL_APP_URL"] = types.GetAppUrl(h.app.AppPathDomain(), h.app.serverConfig)
-
-	// Add the binding environment variables to the env map
-	bindingEnv := h.getBindingEnv()
-	for k, v := range bindingEnv {
-		ret[k] = v
-	}
-	return ret
-}
+// Add the binding environment variables to the env map
 
 func (h *ContainerHandler) getEnvMapAndHash() (map[string]string, string, error) {
-	envMap := h.getEnvMap()
-	envMapHash, err := getMapHash(envMap)
-	if err != nil {
-		return nil, "", err
-	}
-	return envMap, envMapHash, nil
+	_ = "STUB: not implemented"
+	return nil, "", nil
 }
 
 func (h *ContainerHandler) createSpecFiles() ([]string, error) {
+	_ = "STUB: not implemented"
 	// Create the spec files if they are not already present
-	created := []string{}
-	for name, data := range *h.app.Metadata.SpecFiles {
-		diskFile := path.Join(h.app.SourceUrl, name)
-		_, err := os.Stat(diskFile)
-		if err != nil {
-			if err = os.WriteFile(diskFile, []byte(data), 0644); err != nil {
-				return nil, fmt.Errorf("error writing spec file %s: %w", diskFile, err)
-			}
-			created = append(created, diskFile)
-		}
-	}
-
-	return created, nil
+	return nil, nil
 }
 
 func (h *ContainerHandler) createVolumes(ctx context.Context) error {
-	for _, volInfo := range h.volumeInfo {
-		if volInfo.VolumeName == "" {
-			// bind mount
-			continue
-		}
-		dir := volInfo.VolumeName
-		if dir == container.UNNAMED_VOLUME {
-			// unnamed volume, use the path for generating the volume name
-			dir = volInfo.TargetPath
-		}
-
-		genVolumeName := container.GenVolumeName(h.app.Id, dir)
-		h.Info().Msgf("Applying volume %s for app %s dir %s", genVolumeName, h.app.Id, dir)
-		if !h.manager.VolumeExists(ctx, genVolumeName) {
-			err := h.manager.VolumeCreate(ctx, genVolumeName)
-			if err != nil {
-				return fmt.Errorf("error creating volume %s: %w", genVolumeName, err)
-			}
-		}
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
+// bind mount
+
+// unnamed volume, use the path for generating the volume name
+
 func parseBindPaths(vol string) (string, string, bool) {
-	vol, readOnly := strings.CutSuffix(vol, ":ro")
-	p1, p2, ok := strings.Cut(vol, ":")
-	if ok {
-		return p1, p2, readOnly
-	}
-	return "", p1, readOnly
+	_ = "STUB: not implemented"
+	return "", "", false
 }
 
 func (h *ContainerHandler) validateVolumeSource(src string, sourceRelative bool) (string, error) {
-	expanded := os.ExpandEnv(src)
-	if !filepath.IsAbs(expanded) {
-		localPath, err := system.CleanRelativeLocalPath(expanded)
-		if err != nil {
-			return "", err
-		}
-		if sourceRelative {
-			return localPath, nil
-		}
-		return "." + string(filepath.Separator) + localPath, nil
-	}
-
-	sourcePath, err := system.CleanAbsolutePath(expanded)
-	if err != nil {
-		return "", err
-	}
-
-	allowedRoots := []string{}
-	allowedRoots = append(allowedRoots, h.serverConfig.Security.AllowedMounts...)
-	if h.app.SourceUrl != "" && h.app.SourceUrl != types.NO_SOURCE && !system.IsGit(h.app.SourceUrl) {
-		allowedRoots = append(allowedRoots, h.app.SourceUrl)
-	}
-	if h.app.AppRunPath != "" {
-		allowedRoots = append(allowedRoots, h.app.AppRunPath)
-	}
-
-	for _, root := range allowedRoots {
-		cleanRoot, err := system.CleanAbsolutePath(os.ExpandEnv(root))
-		if err != nil {
-			return "", fmt.Errorf("invalid allowed mount path %s: %w", root, err)
-		}
-		inside, err := system.PathWithinDir(cleanRoot, sourcePath)
-		if err != nil {
-			return "", err
-		}
-		if inside {
-			return sourcePath, nil
-		}
-	}
-	return "", fmt.Errorf("source path %s is not within an allowed mount directory", sourcePath)
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
 func (h *ContainerHandler) parseVolumeString(vol string) (*container.VolumeInfo, error) {
-	vol, hasSecretPrefix := strings.CutPrefix(vol, VOL_PREFIX_SECRET)
-	if hasSecretPrefix {
-		// Secret passed through bind mount
-		src, dst, readOnly := parseBindPaths(vol)
-		if src == "" || dst == "" {
-			return nil, fmt.Errorf("expected bind mount (source:target) for cl_secret volume %s", vol)
-		}
-		sourcePath, err := h.validateVolumeSource(src, true)
-		if err != nil {
-			return nil, fmt.Errorf("secret volume source %s is not allowed: %w", src, err)
-		}
-		return &container.VolumeInfo{
-			IsSecret:   hasSecretPrefix,
-			VolumeName: "",
-			SourcePath: sourcePath,
-			TargetPath: dst,
-			ReadOnly:   readOnly,
-		}, nil
-	}
-
-	src, dst, readOnly := parseBindPaths(vol)
-	expandedSrc := os.ExpandEnv(src)
-	if filepath.IsAbs(expandedSrc) || strings.HasPrefix(expandedSrc, "./") || strings.HasPrefix(expandedSrc, "../") {
-		// Bind mount
-		sourcePath, err := h.validateVolumeSource(src, false)
-		if err != nil {
-			return nil, fmt.Errorf("bind volume source %s is not allowed: %w", src, err)
-		}
-		return &container.VolumeInfo{
-			VolumeName: "",
-			SourcePath: sourcePath,
-			TargetPath: dst,
-			ReadOnly:   readOnly,
-		}, nil
-	}
-
-	if src != "" {
-		// Named volume
-		return &container.VolumeInfo{
-			VolumeName: src,
-			SourcePath: "",
-			TargetPath: dst,
-			ReadOnly:   readOnly,
-		}, nil
-
-	} else {
-		// Unnamed volume
-		return &container.VolumeInfo{
-			VolumeName: container.UNNAMED_VOLUME,
-			SourcePath: "",
-			TargetPath: dst,
-			ReadOnly:   readOnly,
-		}, nil
-	}
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
+// Secret passed through bind mount
+
+// Bind mount
+
+// Named volume
+
+// Unnamed volume
+
 func (h *ContainerHandler) DevReload(ctx context.Context, dryRun bool) error {
-	devCM, ok := h.manager.(container.DevContainerManager)
-	if !ok {
-		return fmt.Errorf("container manager does not support dev operations")
-	}
-
-	if dryRun {
-		// The image could be rebuild in case of a dry run, without touching the container.
-		// But a temp image id will have to be used to avoid conflict with the existing image.
-		// Dryrun is a no-op for now for containers
-		return nil
-	}
-
-	if strings.HasPrefix(h.serverConfig.Builder.Mode, "delegate:") {
-		return fmt.Errorf("delegated builds are not supported in dev mode")
-	}
-	if h.serverConfig.Registry.URL != "" {
-		return fmt.Errorf("remote registry is not supported in dev mode")
-	}
-
-	h.GenImageName = container.ImageName(h.image)
-	if h.GenImageName == "" {
-		h.GenImageName = container.GenImageName(h.app.Id, "")
-	}
-	containerName := container.GenContainerName(h.app.Id, h.manager, "", h.manager.SupportsInPlaceUpdate())
-
-	_, running, err := devCM.GetContainerState(ctx, containerName, "")
-	if err != nil {
-		return fmt.Errorf("error checking container status: %w", err)
-	}
-
-	if running {
-		err := h.manager.StopContainer(ctx, containerName)
-		if err != nil {
-			return fmt.Errorf("error stopping container: %w", err)
-		}
-	}
-
-	if h.image == "" {
-		// Using a container file, rebuild the image
-		_ = devCM.RemoveImage(ctx, h.GenImageName)
-
-		_, err := h.createSpecFiles()
-		if err != nil {
-			return err
-		}
-		buildDir := path.Join(h.app.SourceUrl, h.buildDir)
-		err = h.manager.BuildImage(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs)
-		if err != nil {
-			return err
-		}
-		// Don't remove the spec files, it is good if they are checked into the source repo
-		// Makes the app independent of changes in the spec files
-	}
-
-	_ = devCM.RemoveContainer(ctx, containerName)
-
-	if err = h.createVolumes(ctx); err != nil {
-		// Create named volumes for the container
-		return err
-	}
-
-	h.stateLock.Lock()
-	defer h.stateLock.Unlock()
-
-	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
-		// Command lifetime, service is not started, commands will be run with the image
-		return nil
-	}
-	err = devCM.RunContainer(ctx, h.app.AppEntry, h.app.SourceUrl, containerName,
-		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, "", h.IsImageSpec())
-	if err != nil {
-		return fmt.Errorf("error running container: %w", err)
-	}
-
-	hostNamePort, running, err := devCM.GetContainerState(ctx, containerName, "")
-	if err != nil {
-		return fmt.Errorf("error getting running containers: %w", err)
-	}
-	if hostNamePort == "" || !running {
-		logs, _ := devCM.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-		return fmt.Errorf("container %s not running. Logs\n %s", containerName, logs)
-	}
-	h.currentState = ContainerStateRunning
-	h.activeContainerName = containerName
-	h.hostNamePort = hostNamePort
-
-	if h.health != "" {
-		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, "")
-		if err != nil {
-			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-			return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
+// The image could be rebuild in case of a dry run, without touching the container.
+// But a temp image id will have to be used to avoid conflict with the existing image.
+// Dryrun is a no-op for now for containers
+
+// Using a container file, rebuild the image
+
+// Don't remove the spec files, it is good if they are checked into the source repo
+// Makes the app independent of changes in the spec files
+
+// Create named volumes for the container
+
+// Command lifetime, service is not started, commands will be run with the image
+
 func (h *ContainerHandler) WaitForHealth(attempts int, containerName container.ContainerName, expectHash string) error {
-	client := &http.Client{
-		Timeout: time.Duration(h.containerConfig.HealthTimeoutSecs) * time.Second,
-	}
-
-	var err error
-	var resp *http.Response
-	var hostNamePort string
-	var running bool
-	sleepMillis := 50
-	for attempt := 1; attempt <= attempts; attempt++ {
-		hostNamePort, running, err = h.manager.GetContainerState(context.Background(), containerName, expectHash)
-		if err != nil {
-			return fmt.Errorf("error getting running containers: %w", err)
-		}
-		if running {
-			h.currentState = ContainerStateRunning
-			h.hostNamePort = hostNamePort
-		} else {
-			h.currentState = ContainerStateUnknown
-			h.hostNamePort = ""
-		}
-
-		var proxyUrl *url.URL
-		proxyUrl, err = url.Parse(h.GetProxyUrl())
-		if err != nil || !running || proxyUrl.Host == "" {
-			if err == nil {
-				err = fmt.Errorf("could not find container proxy url")
-			}
-			sleepMillis *= 2
-			sleepMillis = int(math.Min(float64(sleepMillis), 2000))
-			h.Debug().Msgf("Sleeping for %d milliseconds, attempt %d, err %v", sleepMillis, attempt, err)
-			time.Sleep(time.Duration(sleepMillis) * time.Millisecond)
-			continue
-		}
-		if !h.stripAppPath {
-			// Apps like Streamlit require the app path to be present
-			proxyUrl = proxyUrl.JoinPath(h.app.Path)
-		}
-
-		proxyUrl = proxyUrl.JoinPath(h.health)
-		resp, err = client.Get(proxyUrl.String())
-		statusCode := "N/A"
-		if err == nil {
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-			statusCode = strconv.Itoa(resp.StatusCode)
-		}
-
-		if resp != nil {
-			resp.Body.Close() //nolint:errcheck
-		}
-
-		h.Debug().Msgf("Attempt %d failed on %s : status %s err %s", attempt, proxyUrl, statusCode, err)
-		sleepMillis *= 2
-		sleepTimeMillis := math.Min(float64(sleepMillis), 2000)
-		time.Sleep(time.Duration(sleepTimeMillis) * time.Millisecond)
-	}
-
-	h.Error().Msgf("Health check failed for app %s after %d attempts: %v", h.app.Id, attempts, err)
-	return err
+	_ = "STUB: not implemented"
+	return nil
 }
 
-func (h *ContainerHandler) getAppHash() (string, error) {
-	if h.app.IsDev {
-		return "", nil
-	}
+// Apps like Streamlit require the app path to be present
 
-	sourceHash, err := h.sourceFS.FileHash(h.excludeGlob)
-	if err != nil {
-		return "", fmt.Errorf("error getting file hash: %w", err)
-	}
+//nolint:errcheck
 
-	coptHash, err := getMapHash(h.app.Metadata.ContainerOptions)
-	if err != nil {
-		return "", fmt.Errorf("error getting copt hash: %w", err)
-	}
-	cargHash, err := getMapHash(h.cargs)
-	if err != nil {
-		return "", fmt.Errorf("error getting carg hash: %w", err)
-	}
-	cvolHash, err := getSliceHash(h.app.Metadata.ContainerVolumes)
-	if err != nil {
-		return "", fmt.Errorf("error getting cvol hash: %w", err)
-	}
-	// For image-spec apps where RefreshImage has resolved a digest, fold the
-	// digest into the identity hash so that a moved tag (e.g.
-	// mycompany/jp-app:latest pointing to new content) yields a different
-	// container name and forces ProdReload down the recreate path.
-	//
-	// The digest is only appended when non-empty so that:
-	//   1. non-image apps produce the exact same hash as before this change
-	//      (no spurious container rebuild on upgrade), and
-	//   2. image-spec apps whose manager returns no digest (e.g. Kubernetes,
-	//      where RefreshImage is currently a no-op) also keep their existing
-	//      hash and container lifecycle.
-	imageDigest := ""
-	if h.image != "" {
-		h.stateLock.RLock()
-		imageDigest = h.imageDigest
-		h.stateLock.RUnlock()
-	}
-	fullHashVal := fmt.Sprintf("%s-%s-%s-%s-%s", sourceHash, h.envMapHash, coptHash, cargHash, cvolHash)
-	if imageDigest != "" {
-		fullHashVal += "-" + imageDigest
-	}
-	sha := sha256.New()
-	if _, err := sha.Write([]byte(fullHashVal)); err != nil {
-		return "", err
-	}
-	fullHash := hex.EncodeToString(sha.Sum(nil))
-	h.Debug().Msgf("Source hash %s Env hash %s copt hash %s args hash %s cvol hash %s image digest %q Full hash %s",
-		sourceHash, h.envMapHash, coptHash, cargHash, cvolHash, imageDigest, fullHash)
-	return fullHash, nil
-}
+func (h *ContainerHandler) getAppHash() (string, error) { _ = "STUB: not implemented"; return "", nil }
+
+// For image-spec apps where RefreshImage has resolved a digest, fold the
+// digest into the identity hash so that a moved tag (e.g.
+// mycompany/jp-app:latest pointing to new content) yields a different
+// container name and forces ProdReload down the recreate path.
+//
+// The digest is only appended when non-empty so that:
+//   1. non-image apps produce the exact same hash as before this change
+//      (no spurious container rebuild on upgrade), and
+//   2. image-spec apps whose manager returns no digest (e.g. Kubernetes,
+//      where RefreshImage is currently a no-op) also keep their existing
+//      hash and container lifecycle.
 
 // IsImageSpec reports whether this container handler was configured with an
 // upstream image reference (i.e. `--spec image` / `container.source = "image:..."`).
@@ -841,21 +240,16 @@ func (h *ContainerHandler) getAppHash() (string, error) {
 // can resolve the current digest and recreate the container when the upstream
 // tag has moved; build-spec apps only need ProdReload on Initialize since
 // their image identity is captured by the source-content hash.
-func (h *ContainerHandler) IsImageSpec() bool {
-	return h.image != ""
-}
+func (h *ContainerHandler) IsImageSpec() bool { _ = "STUB: not implemented"; return false }
 
 // ActiveContainerName returns the last container this handler successfully started or reused.
 func (h *ContainerHandler) ActiveContainerName() (container.ContainerName, bool) {
-	h.stateLock.RLock()
-	defer h.stateLock.RUnlock()
-	if h.activeContainerName == "" {
-		return "", false
-	}
-	return h.activeContainerName, true
+	_ = "STUB: not implemented"
+	return *new(container.ContainerName), false
 }
 
 func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
+	_ = "STUB: not implemented"
 	// For image-spec apps (where the operator supplied an upstream image
 	// reference via `--spec image`/`image:`), resolve the current digest
 	// from the registry before computing the identity hash. This both
@@ -863,241 +257,62 @@ func (h *ContainerHandler) ProdReload(ctx context.Context, dryRun bool) error {
 	// command-based managers) and yields a stable identifier that is folded
 	// into fullHash so a moved tag forces a container recreate. Skipped on
 	// dry-run since it has external side effects.
-	if !dryRun && h.image != "" {
-		digest, err := h.manager.RefreshImage(ctx, container.ImageName(h.image))
-		if err != nil {
-			return fmt.Errorf("error refreshing image %s: %w", h.image, err)
-		}
-		h.stateLock.Lock()
-		h.imageDigest = digest
-		h.stateLock.Unlock()
-	}
-
-	fullHash, err := h.getAppHash()
-	if err != nil {
-		return err
-	}
-
-	h.GenImageName = container.ImageName(h.image)
-	if h.GenImageName == "" {
-		h.GenImageName = container.GenImageName(h.app.Id, fullHash)
-	} else if h.imageDigest != "" {
-		// Digest-pin the image reference we pass to RunContainer/the pod
-		// template. Subsequent pod restarts or scale-ups will fetch the
-		// exact digest the operator approved at refresh time, not whatever
-		// the upstream tag points to at that future moment.
-		h.GenImageName = container.ImageName(container.DigestPinned(h.image, h.imageDigest))
-	}
-
-	if dryRun {
-		// The image could be rebuild in case of a dry run, without touching the container.
-		// But a temp image id will have to be used to avoid conflict with the existing image.
-		// Dryrun is a no-op for now for containers
-		return nil
-	}
-
-	containerName := container.GenContainerName(h.app.Id, h.manager, fullHash, h.manager.SupportsInPlaceUpdate())
-
-	if h.lifetime != types.CONTAINER_LIFETIME_COMMAND {
-		hostNamePort, running, err := h.manager.GetContainerState(ctx, containerName, fullHash)
-		if err != nil {
-			return fmt.Errorf("error getting running containers: %w", err)
-		}
-
-		// For image-spec apps on managers that update workloads in-place
-		// (i.e. Kubernetes), we deliberately bypass the "service already
-		// healthy, reuse it" short-circuit and always fall through to
-		// RunContainer. The upstream tag may have moved while the existing
-		// Deployment's pod-template hash is unchanged (RefreshImage is a
-		// no-op on Kubernetes so the digest is not folded into fullHash),
-		// so re-applying the Deployment is what surfaces the new image:
-		// createDeployment bumps a pod-template annotation on every reload
-		// and sets imagePullPolicy=Always, triggering a RollingUpdate that
-		// pulls the latest image content. Build-spec apps and command-based
-		// managers (Docker/Podman, where the digest is in fullHash) keep
-		// the existing reuse fast path.
-		canReuse := !h.IsImageSpec() || !h.manager.SupportsInPlaceUpdate()
-		h.Debug().Msgf("current state: hostNamePort %s running %t expectHash %s canReuse %t", hostNamePort, running, fullHash, canReuse)
-		if hostNamePort != "" && canReuse {
-			// Service is present, make sure deployment it is in the correct state
-			h.stateLock.Lock()
-			defer h.stateLock.Unlock()
-
-			if !running {
-				// This does not handle the case where volume list has changed
-				h.Debug().Msgf("container not running, starting")
-				err = h.manager.StartContainer(ctx, containerName)
-				if err != nil {
-					return fmt.Errorf("error starting container: %w", err)
-				}
-
-				if h.health != "" {
-					err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, fullHash)
-					if err != nil {
-						if h.containerConfig.ShowLogsForFailure {
-							logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-							return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
-						}
-						return fmt.Errorf("error waiting for health: %w", err)
-					}
-				}
-			} else {
-				// TODO handle case where image name is specified and param values change, need to restart container in that case
-				h.hostNamePort = hostNamePort
-				h.Debug().Msg("container already running")
-			}
-
-			h.currentState = ContainerStateRunning
-			h.activeContainerName = containerName
-			h.Debug().Msgf("updating port to %s", h.hostNamePort)
-			return nil
-		}
-	}
-
-	sourceDir := ""
-	if h.image == "" {
-		// Using a container file, build the image if required
-		imageExists, err := h.manager.ImageExists(ctx, h.GenImageName)
-		if err != nil {
-			return fmt.Errorf("error getting images: %w", err)
-		}
-
-		if !imageExists {
-			sourceDir, err = h.sourceFS.CreateTempSourceDir()
-			if err != nil {
-				return fmt.Errorf("error creating temp source dir: %w", err)
-			}
-			buildDir := path.Join(sourceDir, h.buildDir)
-			buildErr := h.manager.BuildImage(ctx, h.GenImageName, buildDir, h.containerFile, h.cargs)
-
-			if buildErr != nil {
-				return fmt.Errorf("error building image: %w", buildErr)
-			}
-		}
-	}
-
-	if err = h.createVolumes(ctx); err != nil {
-		// Create named volumes for the container
-		return err
-	}
-
-	h.stateLock.Lock()
-	defer h.stateLock.Unlock()
-	// Start the container with newly built image
-
-	if h.lifetime == types.CONTAINER_LIFETIME_COMMAND {
-		// Command lifetime, service is not started, commands will be run with the image
-		return nil
-	}
-	err = h.manager.RunContainer(ctx, h.app.AppEntry, sourceDir, containerName,
-		h.GenImageName, h.port, h.envMap, h.volumeInfo, h.app.Metadata.ContainerOptions, h.paramMap, fullHash, h.IsImageSpec())
-	if err != nil {
-		return fmt.Errorf("error starting container after update: %w", err)
-	}
-
-	if sourceDir != "" {
-		// Cleanup temp dir after image has been built and mount template file has been generated
-		if err = os.RemoveAll(sourceDir); err != nil {
-			return fmt.Errorf("error removing temp source dir: %w", err)
-		}
-	}
-
-	if h.health != "" {
-		err = h.WaitForHealth(h.containerConfig.HealthAttemptsAfterStartup, containerName, fullHash)
-		if err != nil {
-			if h.containerConfig.ShowLogsForFailure {
-				logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-				return fmt.Errorf("error waiting for health: %w. Logs\n %s", err, logs)
-			}
-			return fmt.Errorf("error waiting for health: %w", err)
-		}
-	}
-
-	hostNamePort, running, err := h.manager.GetContainerState(ctx, containerName, fullHash)
-	if err != nil {
-		return fmt.Errorf("error getting running containers: %w", err)
-	}
-
-	h.Debug().Msgf("containerState hostNamePort %s running %t expectedHash %s", hostNamePort, running, container.TrimLabelValue(fullHash))
-	if hostNamePort == "" || !running {
-		if h.containerConfig.ShowLogsForFailure {
-			logs, _ := h.manager.GetContainerLogs(ctx, containerName, h.containerConfig.LogLinesToShow)
-			return fmt.Errorf("container not running. Logs\n %s", logs)
-		}
-		return fmt.Errorf("container not running")
-	}
-	h.currentState = ContainerStateRunning
-	h.activeContainerName = containerName
-	h.hostNamePort = hostNamePort
 	return nil
 }
 
-func (h *ContainerHandler) Close() error {
-	h.Debug().Msgf("Closing container handler for app %s", h.app.Id)
-	if h.idleShutdownTicker != nil {
-		h.idleShutdownTicker.Stop()
-	}
+// Digest-pin the image reference we pass to RunContainer/the pod
+// template. Subsequent pod restarts or scale-ups will fetch the
+// exact digest the operator approved at refresh time, not whatever
+// the upstream tag points to at that future moment.
 
-	if h.healthCheckTicker != nil {
-		h.healthCheckTicker.Stop()
-	}
-	return nil
-}
+// The image could be rebuild in case of a dry run, without touching the container.
+// But a temp image id will have to be used to avoid conflict with the existing image.
+// Dryrun is a no-op for now for containers
+
+// For image-spec apps on managers that update workloads in-place
+// (i.e. Kubernetes), we deliberately bypass the "service already
+// healthy, reuse it" short-circuit and always fall through to
+// RunContainer. The upstream tag may have moved while the existing
+// Deployment's pod-template hash is unchanged (RefreshImage is a
+// no-op on Kubernetes so the digest is not folded into fullHash),
+// so re-applying the Deployment is what surfaces the new image:
+// createDeployment bumps a pod-template annotation on every reload
+// and sets imagePullPolicy=Always, triggering a RollingUpdate that
+// pulls the latest image content. Build-spec apps and command-based
+// managers (Docker/Podman, where the digest is in fullHash) keep
+// the existing reuse fast path.
+
+// Service is present, make sure deployment it is in the correct state
+
+// This does not handle the case where volume list has changed
+
+// TODO handle case where image name is specified and param values change, need to restart container in that case
+
+// Using a container file, build the image if required
+
+// Create named volumes for the container
+
+// Start the container with newly built image
+
+// Command lifetime, service is not started, commands will be run with the image
+
+// Cleanup temp dir after image has been built and mount template file has been generated
+
+func (h *ContainerHandler) Close() error { _ = "STUB: not implemented"; return nil }
 
 func (h *ContainerHandler) Run(ctx context.Context, path string, cmdArgs []string, env []string) (*exec.Cmd, error) {
-	args := []string{"run", "--rm"}
+	_ = "STUB: not implemented"
+	return nil, nil
 
 	// Add env args
-	for k, v := range h.envMap {
-		args = append(args, "--env", fmt.Sprintf("%s=%s", k, v))
-	}
-
-	// Add container related args
-	commandOptions, err := container.ParseCommandOptions(h.serverConfig.System.ContainerCommand, h.app.Metadata.ContainerOptions)
-	if err != nil {
-		return nil, err
-	}
-	commandOptionArgs, err := container.CommandOptionArgs(commandOptions, h.serverConfig.Security.AllowedContainerArgs)
-	if err != nil {
-		return nil, err
-	}
-	args = append(args, commandOptionArgs...)
-
-	if len(h.mountArgs) > 0 {
-		args = append(args, h.mountArgs...)
-	}
-
-	args = append(args, string(h.GenImageName), path)
-	args = append(args, cmdArgs...)
-	h.Debug().Msgf("Running command with args: %v", container.RedactEnvArgs(args))
-
-	cmd := exec.CommandContext(ctx, h.serverConfig.System.ContainerCommand, args...)
-	return cmd, nil
 }
+
+// Add container related args
 
 func (h *ContainerHandler) getBindingEnv() map[string]string {
+	_ = "STUB: not implemented"
 	// stage, dev and preview apps use staging binding
-	useProdAccount := strings.HasPrefix(string(h.app.Id), types.ID_PREFIX_APP_PROD)
-
-	env := make(map[string]string)
-	serviceTypeCount := make(map[string]int)
-	for _, binding := range h.bindings {
-		serviceTypeCount[binding.ServiceType]++
-
-		countSuffix := ""
-		// first binding of postgres type will use POSTGRES_URL, second will use POSTGRES2_URL, etc.
-		if serviceTypeCount[binding.ServiceType] > 1 {
-			countSuffix = strconv.Itoa(serviceTypeCount[binding.ServiceType])
-		}
-		envPrefix := strings.ToUpper(binding.ServiceType) + countSuffix
-		account := binding.StagedMetadata.Account
-		if useProdAccount {
-			account = binding.Metadata.Account
-		}
-
-		for k, v := range account {
-			env[envPrefix+"_"+strings.ToUpper(k)] = v
-		}
-	}
-	return env
+	return nil
 }
+
+// first binding of postgres type will use POSTGRES_URL, second will use POSTGRES2_URL, etc.

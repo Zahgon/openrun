@@ -4,8 +4,6 @@
 package types
 
 import (
-	"fmt"
-	"math"
 	"net/http"
 )
 
@@ -16,19 +14,11 @@ type RequestError struct {
 }
 
 func CreateRequestError(message string, code int) RequestError {
-	return RequestError{
-		Message: message,
-		Code:    code,
-	}
+	_ = "STUB: not implemented"
+	return *new(RequestError)
 }
 
-func (r RequestError) Error() string {
-	if r.Message == "" {
-		return fmt.Sprintf("status code %d", r.Code)
-	} else {
-		return r.Message
-	}
-}
+func (r RequestError) Error() string { _ = "STUB: not implemented"; return "" }
 
 // CreateAppRequest is the request body for creating an app
 // This gets saved as ApplyInfo when doing declarative app creation
@@ -60,13 +50,8 @@ type UpdateAppRequest struct {
 }
 
 func CreateUpdateAppRequest() UpdateAppRequest {
-	return UpdateAppRequest{
-		AuthnType:          StringValueUndefined,
-		GitAuthName:        StringValueUndefined,
-		StageWriteAccess:   BoolValueUndefined,
-		PreviewWriteAccess: BoolValueUndefined,
-		Spec:               StringValueUndefined,
-	}
+	_ = "STUB: not implemented"
+	return *new(UpdateAppRequest)
 }
 
 // UpdateAppMetadataRequest is the request body for updating an app metadata
@@ -77,11 +62,8 @@ type UpdateAppMetadataRequest struct {
 }
 
 func CreateUpdateAppMetadataRequest() UpdateAppMetadataRequest {
-	return UpdateAppMetadataRequest{
-		Spec:          StringValueUndefined,
-		ConfigType:    AppMetadataConfigType(StringValueUndefined),
-		ConfigEntries: []string{},
-	}
+	_ = "STUB: not implemented"
+	return *new(UpdateAppMetadataRequest)
 }
 
 // UpdateBindingRequest is the request body for updating a binding. Binding
@@ -285,18 +267,7 @@ const (
 
 // GetHTTPHeader returns the first value of the header with the given key.
 // The key has to be a HTTP Canonical Header Key (case is important)
-func GetHTTPHeader(header http.Header, key string) string {
-	val := header[key]
-	if len(val) > 0 {
-		return val[0]
-	}
-	return ""
-}
+func GetHTTPHeader(header http.Header, key string) string { _ = "STUB: not implemented"; return "" }
 
 // Int64ToInt32 converts an int64 to an int32, returning an error if the value is out of range
-func Int64ToInt32(v int64) (int32, error) {
-	if v < math.MinInt32 || v > math.MaxInt32 {
-		return 0, fmt.Errorf("value %d overflows int32", v)
-	}
-	return int32(v), nil
-}
+func Int64ToInt32(v int64) (int32, error) { _ = "STUB: not implemented"; return 0, nil }

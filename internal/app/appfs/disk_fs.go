@@ -5,15 +5,9 @@ package appfs
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -26,16 +20,8 @@ type DiskReadFS struct {
 var _ ReadableFS = (*DiskReadFS)(nil)
 
 func NewDiskReadFS(logger *types.Logger, root string, specFiles types.SpecFiles) *DiskReadFS {
-	cleanRoot, err := system.CleanAbsolutePath(root)
-	if err != nil {
-		cleanRoot = filepath.Clean(root)
-	}
-
-	return &DiskReadFS{
-		Logger:    logger,
-		root:      cleanRoot,
-		specFiles: specFiles,
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 type DiskWriteFS struct {
@@ -43,195 +29,76 @@ type DiskWriteFS struct {
 }
 
 func (d *DiskReadFS) Open(name string) (fs.File, error) {
-	localName, specName, err := d.cleanName(name)
-	if err != nil {
-		return nil, err
-	}
-
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close() //nolint:errcheck
-
-	f, err := root.Open(localName)
-	if err != nil && errors.Is(err, fs.ErrNotExist) {
-		if _, ok := d.specFiles[specName]; ok {
-			// File found in spec files, use that
-			df := NewDiskFile(specName, []byte(d.specFiles[specName]), DiskFileInfo{
-				name:    specName,
-				len:     int64(len(d.specFiles[specName])),
-				modTime: time.Now(),
-			})
-			return df, nil
-		}
-	}
-	return f, err
+	_ = "STUB: not implemented"
+	return *new(fs.File), nil
 }
+
+//nolint:errcheck
+
+// File found in spec files, use that
 
 func (d *DiskReadFS) ReadFile(name string) ([]byte, error) {
-	localName, specName, err := d.cleanName(name)
-	if err != nil {
-		return nil, err
-	}
-
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close() //nolint:errcheck
-
-	bytes, err := root.ReadFile(localName)
-	if err != nil && errors.Is(err, fs.ErrNotExist) {
-		if _, ok := d.specFiles[specName]; ok {
-			// File found in spec files, use that
-			return []byte(d.specFiles[specName]), nil
-		}
-	}
-	return bytes, err
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
+
+// File found in spec files, use that
 
 func (d *DiskReadFS) Stat(name string) (fs.FileInfo, error) {
-	localName, specName, err := d.cleanName(name)
-	if err != nil {
-		return nil, err
-	}
-
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close() //nolint:errcheck
-
-	fi, err := root.Stat(localName)
-	if err != nil && errors.Is(err, fs.ErrNotExist) {
-		if _, ok := d.specFiles[specName]; ok {
-			fi := DiskFileInfo{
-				name:    specName,
-				len:     int64(len(d.specFiles[specName])),
-				modTime: time.Now(),
-			}
-			return &fi, nil
-		}
-	}
-
-	return fi, err
+	_ = "STUB: not implemented"
+	return *new(fs.FileInfo), nil
 }
+
+//nolint:errcheck
 
 func (d *DiskReadFS) StatNoSpec(name string) (fs.FileInfo, error) {
-	localName, _, err := d.cleanName(name)
-	if err != nil {
-		return nil, err
-	}
-
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close() //nolint:errcheck
-
-	return root.Stat(localName)
+	_ = "STUB: not implemented"
+	return *new(fs.FileInfo), nil
 }
+
+//nolint:errcheck
 
 func (d *DiskReadFS) Glob(pattern string) (matches []string, err error) {
+	_ = "STUB: not implemented"
 	// TODO glob does not look at spec files
-	cleanPattern, err := system.CleanRelativePath(pattern)
-	if err != nil {
-		return nil, err
-	}
-
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close() //nolint:errcheck
-
-	return fs.Glob(root.FS(), cleanPattern)
+	return nil, nil
 }
 
-func (d *DiskReadFS) StaticFiles() []string {
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		d.Logger.Err(err).Msg("error opening root for static files")
-		return nil
-	}
-	defer root.Close() //nolint:errcheck
+//nolint:errcheck
 
-	rootFS := root.FS()
-	staticFiles, err := doublestar.Glob(rootFS, "static/**/*")
-	if err != nil {
-		d.Logger.Err(err).Msg("error getting static files")
-		return nil
-	}
+func (d *DiskReadFS) StaticFiles() []string { _ = "STUB: not implemented"; return nil }
 
-	var staticRootFiles []string
-	staticRootFiles, err = doublestar.Glob(rootFS, "static_root/**/*")
-	if err != nil {
-		d.Logger.Err(err).Msg("error getting static_root files")
-		return nil
-	}
-	staticFiles = append(staticFiles, staticRootFiles...)
-	return staticFiles
-}
+//nolint:errcheck
 
 func (d *DiskReadFS) FileHash(excludeGlob []string) (string, error) {
-	return "", fmt.Errorf("FileHash not implemented for dev apps : DiskReadFS")
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
 func (d *DiskReadFS) CreateTempSourceDir() (string, error) {
-	return "", fmt.Errorf("CreateTempSourceDir not implemented for dev apps : DiskReadFS")
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
 func (d *DiskReadFS) Reset() {
+	_ = "STUB: not implemented"
 	// do nothing
+	return
 }
 
-func (d *DiskWriteFS) Write(name string, bytes []byte) error {
-	localName, _, err := d.cleanName(name)
-	if err != nil {
-		return err
-	}
+func (d *DiskWriteFS) Write(name string, bytes []byte) error { _ = "STUB: not implemented"; return nil }
 
-	if err := os.MkdirAll(d.root, 0700); err != nil {
-		return fmt.Errorf("error creating root directory %s : %s", d.root, err)
-	}
+//nolint:errcheck
 
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return err
-	}
-	defer root.Close() //nolint:errcheck
+func (d *DiskWriteFS) Remove(name string) error { _ = "STUB: not implemented"; return nil }
 
-	dirName := filepath.Dir(localName)
-	if dirName != "." {
-		if err := root.MkdirAll(dirName, 0700); err != nil {
-			return fmt.Errorf("error creating directory %s : %s", dirName, err)
-		}
-	}
-	return root.WriteFile(localName, bytes, 0600)
-}
-
-func (d *DiskWriteFS) Remove(name string) error {
-	localName, _, err := d.cleanName(name)
-	if err != nil {
-		return err
-	}
-
-	root, err := os.OpenRoot(d.root)
-	if err != nil {
-		return err
-	}
-	defer root.Close() //nolint:errcheck
-
-	return root.Remove(localName)
-}
+//nolint:errcheck
 
 func (d *DiskReadFS) cleanName(name string) (localName string, specName string, err error) {
-	specName, err = system.CleanRelativePath(name)
-	if err != nil {
-		return "", "", err
-	}
-	return filepath.FromSlash(specName), specName, nil
+	_ = "STUB: not implemented"
+	return "", "", nil
 }
 
 type DiskFile struct {
@@ -243,31 +110,27 @@ type DiskFile struct {
 var _ fs.File = (*DiskFile)(nil)
 
 func NewDiskFile(name string, data []byte, fi DiskFileInfo) *DiskFile {
-	reader := bytes.NewReader(data)
-	return &DiskFile{name: name, fi: fi, reader: reader}
+	_ = "STUB: not implemented"
+	return nil
 }
 
-func (f *DiskFile) Read(dst []byte) (int, error) {
-	return f.reader.Read(dst)
-}
+func (f *DiskFile) Read(dst []byte) (int, error) { _ = "STUB: not implemented"; return 0, nil }
 
-func (f *DiskFile) Name() string {
-	return f.name
-}
+func (f *DiskFile) Name() string { _ = "STUB: not implemented"; return "" }
 
 func (f *DiskFile) Stat() (fs.FileInfo, error) {
-	return &f.fi, nil
+	_ = "STUB: not implemented"
+	return *new(fs.FileInfo), nil
 }
 
 func (f *DiskFile) Seek(offset int64, whence int) (int64, error) {
+	_ = "STUB: not implemented"
 	// Seek is called by http.ServeContent in source_fs for the unoptimized case only
 	// The data is decompressed and then recompressed if required in the unoptimized case
-	return f.reader.Seek(offset, whence)
+	return 0, nil
 }
 
-func (f *DiskFile) Close() error {
-	return nil
-}
+func (f *DiskFile) Close() error { _ = "STUB: not implemented"; return nil }
 
 type DiskFileInfo struct {
 	name    string
@@ -277,22 +140,14 @@ type DiskFileInfo struct {
 
 var _ fs.FileInfo = (*DiskFileInfo)(nil)
 
-func (fi *DiskFileInfo) Name() string {
-	return fi.name
-}
+func (fi *DiskFileInfo) Name() string { _ = "STUB: not implemented"; return "" }
 
-func (fi *DiskFileInfo) Size() int64 {
-	return fi.len
-}
-func (fi *DiskFileInfo) Mode() fs.FileMode {
-	return 0
-}
-func (fi *DiskFileInfo) ModTime() time.Time {
-	return fi.modTime
-}
-func (fi *DiskFileInfo) IsDir() bool {
-	return false
-}
-func (fi *DiskFileInfo) Sys() any {
-	return nil
-}
+func (fi *DiskFileInfo) Size() int64 { _ = "STUB: not implemented"; return 0 }
+
+func (fi *DiskFileInfo) Mode() fs.FileMode { _ = "STUB: not implemented"; return *new(fs.FileMode) }
+
+func (fi *DiskFileInfo) ModTime() time.Time { _ = "STUB: not implemented"; return *new(time.Time) }
+
+func (fi *DiskFileInfo) IsDir() bool { _ = "STUB: not implemented"; return false }
+
+func (fi *DiskFileInfo) Sys() any { _ = "STUB: not implemented"; return *new(any) }

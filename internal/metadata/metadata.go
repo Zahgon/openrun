@@ -6,17 +6,10 @@ package metadata
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgxlisten"
 	"github.com/openrundev/openrun/internal/system"
@@ -43,329 +36,46 @@ const pg_listen_channel = "openrun_events"
 
 // NewMetadata creates a new metadata persistence layer
 func NewMetadata(logger *types.Logger, config *types.ServerConfig) (*Metadata, error) {
-	db, dbType, err := system.InitDBConnection(config.Metadata.DBConnection, "metadata", system.DB_SQLITE_POSTGRES)
-	if err != nil {
-		return nil, fmt.Errorf("error initializing db: %w", err)
-	}
-
-	m := &Metadata{
-		Logger: logger,
-		config: config,
-		db:     db,
-		dbType: dbType,
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("error getting hostname: %w", err)
-	}
-	leaderElection := NewLeaderElection(logger, m, config, string(types.CurrentServerId), hostname)
-	m.leaderElection = leaderElection
-
-	certStorage, err := NewCertStorage(context.Background(), logger, m)
-	if err != nil {
-		return nil, fmt.Errorf("error initializing cert storage: %w", err)
-	}
-	m.certStorage = certStorage
-
-	err = m.VersionUpgrade(config)
-	if err != nil {
-		return nil, err
-	}
-
-	m.leaderElection.StartLoop(context.Background())
-
-	if m.dbType == system.DB_TYPE_POSTGRES {
-		// Setup listener for app update notifications
-		m.pgListener = &pgxlisten.Listener{
-			Connect: func(ctx context.Context) (*pgx.Conn, error) {
-				return pgx.Connect(ctx, m.config.Metadata.DBConnection)
-			},
-			LogError: func(innerCtx context.Context, err error) {
-				m.Err(err).Msg("error in postgres listener")
-			},
-			ReconnectDelay: 2 * time.Second,
-		}
-
-		var handler pgxlisten.HandlerFunc = func(ctx context.Context, notification *pgconn.Notification, conn *pgx.Conn) error {
-			if notification.Payload == "" {
-				return nil
-			}
-
-			msg := types.NotificationMessage{}
-			err := json.Unmarshal([]byte(notification.Payload), &msg)
-			if err != nil {
-				m.Error().Err(err).Msg("error unmarshalling notification payload")
-				return err
-			}
-
-			switch msg.MessageType {
-			case types.MessageTypeAppUpdate:
-				updateMsg := types.AppUpdateMessage{}
-				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
-				if err != nil {
-					m.Error().Err(err).Msg("error unmarshalling app update message")
-					return err
-				}
-				go m.AppNotifyFunc(updateMsg.Payload)
-			case types.MessageTypeConfigUpdate:
-				updateMsg := types.ConfigUpdateMessage{}
-				err := json.Unmarshal([]byte(notification.Payload), &updateMsg)
-				if err != nil {
-					m.Error().Err(err).Msg("error unmarshalling config update message")
-					return err
-				}
-				go m.ConfigNotifyFunc(updateMsg.Payload)
-			default:
-				m.Error().Msgf("unknown message type: %s", msg.MessageType)
-			}
-
-			return nil
-		}
-
-		m.pgListener.Handle(pg_listen_channel, handler)
-		go func() {
-			err := m.pgListener.Listen(context.Background())
-			if err != nil {
-				m.Error().Err(err).Msg("error listening for postgres messages")
-				return
-			}
-		}()
-	}
-
-	return m, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+// Setup listener for app update notifications
 
 // IsLeader returns true if the current server is the leader
-func (m *Metadata) IsLeader() bool {
-	return m.leaderElection.IsLeader()
-}
+func (m *Metadata) IsLeader() bool { _ = "STUB: not implemented"; return false }
 
 // Close stops background goroutines owned by Metadata (e.g. leader election).
-func (m *Metadata) Close() {
-	m.leaderElection.Stop()
-}
+func (m *Metadata) Close() { _ = "STUB: not implemented"; return }
 
 // GetCertStorage returns the cert storage implementation which persists the cert info to the database.
 func (m *Metadata) GetCertStorage() certmagic.Storage {
-	return m.certStorage
+	_ = "STUB: not implemented"
+	return *
+
+	// NotifyAppUpdate sends a notification through the postgres listener that an app has been updated
+	new(certmagic.Storage)
 }
 
-// NotifyAppUpdate sends a notification through the postgres listener that an app has been updated
 func (m *Metadata) NotifyAppUpdate(appPathDomains []types.AppPathDomain) error {
-	if m.dbType != system.DB_TYPE_POSTGRES {
-		return nil
-	}
-
-	payload := types.AppUpdatePayload{
-		AppPathDomains: appPathDomains,
-		ServerId:       types.CurrentServerId,
-	}
-
-	msg := types.AppUpdateMessage{
-		MessageType: types.MessageTypeAppUpdate,
-		Payload:     payload,
-	}
-
-	payloadBytes, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	_, err = m.db.Exec("select pg_notify($1,$2)", pg_listen_channel, string(payloadBytes))
-	return err
-}
-
-// NotifyConfigUpdate sends a notification through the postgres listener that the config has been updated
-func (m *Metadata) NotifyConfigUpdate() error {
-	if m.dbType != system.DB_TYPE_POSTGRES {
-		return nil
-	}
-
-	payload := types.ConfigUpdatePayload{
-		ServerId: types.CurrentServerId,
-	}
-
-	msg := types.ConfigUpdateMessage{
-		MessageType: types.MessageTypeConfigUpdate,
-		Payload:     payload,
-	}
-
-	payloadBytes, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	_, err = m.db.Exec("select pg_notify($1,$2)", pg_listen_channel, string(payloadBytes))
-	return err
-}
-
-func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
-	version := 0
-	row := m.db.QueryRow("SELECT version, last_upgraded FROM version")
-	var dt time.Time
-	row.Scan(&version, &dt) //nolint:errcheck // ignore error if no version is found
-
-	if version < CURRENT_DB_VERSION && !m.config.Metadata.AutoUpgrade {
-		return fmt.Errorf("DB autoupgrade is disabled, exiting. Server %d, DB %d", CURRENT_DB_VERSION, version)
-	}
-
-	if !config.Metadata.IgnoreHigherVersion && version > CURRENT_DB_VERSION {
-		return fmt.Errorf("DB version is newer than server version, upgrade OpenRun server version. Server %d, DB %d", CURRENT_DB_VERSION, version)
-	}
-
-	if version == CURRENT_DB_VERSION {
-		m.Info().Msg("DB version is current")
-		return nil
-	}
-
-	ctx := context.Background()
-	tx, err := m.BeginTransaction(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	if version < 1 {
-		m.Info().Msg("No version, initializing")
-		if _, err := tx.ExecContext(ctx, `create table version (version int, last_upgraded `+system.MapDataType(m.dbType, "datetime")+")"); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `insert into version values (1,`+system.FuncNow(m.dbType)+")"); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `create table apps(id text, path text, domain text, source_url text, is_dev bool, main_app text, user_id text, create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", settings json, metadata json, UNIQUE(id), UNIQUE(path, domain))"); err != nil {
-			return err
-		}
-	}
-
-	if version < 2 {
-		m.Info().Msg("Upgrading to version 2")
-		if err := m.initFileTables(ctx, tx); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `update version set version=2, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 3 {
-		m.Info().Msg("Upgrading to version 3")
-
-		if _, err := tx.ExecContext(ctx, `alter table app_versions add column previous_version int default 0`); err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx, `update version set version=3, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 4 {
-		m.Info().Msg("Upgrading to version 4")
-		if _, err := tx.ExecContext(ctx, `create table sync(id text, path text, is_scheduled bool, user_id text, create_time `+system.MapDataType(m.dbType, "datetime")+", metadata json, PRIMARY KEY(id))"); err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx, `update version set version=4, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 5 {
-		m.Info().Msg("Upgrading to version 5")
-		if _, err := tx.ExecContext(ctx, `alter table sync add column status json`); err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx, `update version set version=5, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 6 {
-		m.Info().Msg("Upgrading to version 6")
-		if _, err := tx.ExecContext(ctx, `create table config(version_id text, user_id text, update_time `+system.MapDataType(m.dbType, "datetime")+", config json)"); err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx, `update version set version=6, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 7 {
-		m.Info().Msg("Upgrading to version 7")
-		if _, err := tx.ExecContext(ctx, `create table keystore(key text, value `+system.MapDataType(m.dbType, "blob")+
-			`, create_time `+system.MapDataType(m.dbType, "datetime")+`, delete_at `+system.MapDataType(m.dbType, "datetime")+`, PRIMARY KEY(key))`); err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx, `update version set version=7, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 8 {
-		m.Info().Msg("Upgrading to version 8")
-		err := m.migrateAuthSettings(ctx, tx)
-		if err != nil {
-			return err
-		}
-
-		if _, err := tx.ExecContext(ctx, `update version set version=8, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 9 {
-		m.Info().Msg("Upgrading to version 9")
-		if err := m.certStorage.createTables(ctx, tx); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `update version set version=9, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 10 {
-		m.Info().Msg("Upgrading to version 10")
-		if err := m.leaderElection.CreateTables(ctx, tx); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `update version set version=10, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if version < 11 {
-		m.Info().Msg("Upgrading to version 11")
-		if err := m.createServiceBindings(ctx, tx); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `update version set version=11, last_upgraded=`+system.FuncNow(m.dbType)); err != nil {
-			return err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
-func (m *Metadata) initFileTables(ctx context.Context, tx types.Transaction) error {
-	if _, err := tx.ExecContext(ctx, `create table files (sha text, compression_type text, content `+system.MapDataType(m.dbType, "blob")+`, create_time `+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(sha))"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `create table app_versions (appid text, version int, user_id text, metadata json, create_time `+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(appid, version))"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `create table app_files (appid text, version int, name text, sha text, uncompressed_size int, create_time `+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(appid, version, name))"); err != nil {
-		return err
-	}
+// NotifyConfigUpdate sends a notification through the postgres listener that the config has been updated
+func (m *Metadata) NotifyConfigUpdate() error { _ = "STUB: not implemented"; return nil }
 
+func (m *Metadata) VersionUpgrade(config *types.ServerConfig) error {
+	_ = "STUB: not implemented"
+	return nil
+}
+
+//nolint:errcheck // ignore error if no version is found
+
+//nolint:errcheck
+
+func (m *Metadata) initFileTables(ctx context.Context, tx types.Transaction) error {
+	_ = "STUB: not implemented"
 	return nil
 }
 
@@ -377,496 +87,136 @@ type appMetadataAndSettings struct {
 }
 
 func (m *Metadata) getAppMetadataAndSettings(ctx context.Context, tx types.Transaction) ([]appMetadataAndSettings, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select domain, path, settings, metadata from apps`))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query()
-	if err != nil {
-		return nil, fmt.Errorf("error querying apps metadata: %w", err)
-	}
-	apps := make([]appMetadataAndSettings, 0)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var path, domain string
-		var settingsStr, metadataStr sql.NullString
-		err = rows.Scan(&domain, &path, &settingsStr, &metadataStr)
-		if err != nil {
-			return nil, fmt.Errorf("error querying next app: %w", err)
-		}
-
-		var metadata types.AppMetadata
-		var settings types.AppSettings
-
-		if metadataStr.Valid && metadataStr.String != "" {
-			err = json.Unmarshal([]byte(metadataStr.String), &metadata)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-			}
-		}
-
-		if settingsStr.Valid && settingsStr.String != "" {
-			err = json.Unmarshal([]byte(settingsStr.String), &settings)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling settings: %w", err)
-			}
-		}
-
-		apps = append(apps, appMetadataAndSettings{
-			path:     path,
-			domain:   domain,
-			metadata: &metadata,
-			settings: &settings,
-		})
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-	return apps, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
+
+//nolint:errcheck
 
 // migrateAuthSettings migrates the auth settings (app auth and git auth) from the app settings to the app metadata
 func (m *Metadata) migrateAuthSettings(ctx context.Context, tx types.Transaction) error {
-	allApps, err := m.getAppMetadataAndSettings(ctx, tx)
-	if err != nil {
-		return fmt.Errorf("error getting app metadata and settings: %w", err)
-	}
-	for _, app := range allApps {
-		app.metadata.AuthnType = app.settings.AuthnType     //nolint:staticcheck // deprecated
-		app.settings.AuthnType = ""                         //nolint:staticcheck // deprecated
-		app.metadata.GitAuthName = app.settings.GitAuthName // nolint:staticcheck // deprecated
-		app.settings.GitAuthName = ""                       //nolint:staticcheck // deprecated
-		err := m.updateAppMetadata(ctx, tx, app.path, app.domain, app.metadata)
-		if err != nil {
-			return fmt.Errorf("error updating app metadata: %w", err)
-		}
-		err = m.updateAppSettings(ctx, tx, app.path, app.domain, app.settings)
-		if err != nil {
-			return fmt.Errorf("error updating app settings: %w", err)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
-func (m *Metadata) CreateApp(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
-	settingsJson, err := json.Marshal(app.Settings)
-	if err != nil {
-		return fmt.Errorf("error marshalling settings: %w", err)
-	}
-	metadataJson, err := json.Marshal(app.Metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
+//nolint:staticcheck // deprecated
+//nolint:staticcheck // deprecated
+// nolint:staticcheck // deprecated
+//nolint:staticcheck // deprecated
 
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into apps(id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata)`+
-			` values(?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+", "+system.FuncNow(m.dbType)+", ?, ?)"),
-		app.Id, app.Path, app.Domain, app.MainApp, app.SourceUrl, app.IsDev, app.UserID, settingsJson, metadataJson)
-	if err != nil {
-		return fmt.Errorf("error inserting app: %w", err)
-	}
+func (m *Metadata) CreateApp(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) GetApp(pathDomain types.AppPathDomain) (*types.AppEntry, error) {
-	tx, err := m.BeginTransaction(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback() //nolint:errcheck
-	return m.GetAppTx(context.Background(), tx, pathDomain)
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
 
 func (m *Metadata) GetAppTx(ctx context.Context, tx types.Transaction, pathDomain types.AppPathDomain) (*types.AppEntry, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where path = ? and domain = ?`))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	row := stmt.QueryRow(pathDomain.Path, pathDomain.Domain)
-	var app types.AppEntry
-	var settings, metadata sql.NullString
-	err = row.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, errors.New("app not found")
-		}
-		m.Error().Err(err).Msgf("query %s %s", pathDomain.Path, pathDomain.Domain)
-		return nil, fmt.Errorf("error querying app: %w", err)
-	}
-
-	if metadata.Valid && metadata.String != "" {
-		err = json.Unmarshal([]byte(metadata.String), &app.Metadata)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-		}
-	}
-
-	if settings.Valid && settings.String != "" {
-		err = json.Unmarshal([]byte(settings.String), &app.Settings)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling settings: %w", err)
-		}
-	}
-
-	if app.Metadata.SpecFiles == nil {
-		tf := make(types.SpecFiles)
-		app.Metadata.SpecFiles = &tf
-	}
-
-	return &app, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
+//nolint:errcheck
+
 func (m *Metadata) DeleteApp(ctx context.Context, tx types.Transaction, id types.AppId) error {
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from app_versions where appid in (select id from apps where id = ? or main_app = ?)`), id, id); err != nil {
-		return err
-	}
-
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from app_files where appid in (select id from apps where id = ? or main_app = ?)`), id, id); err != nil {
-		return err
-	}
-
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from apps where id = ? or main_app = ? `), id, id); err != nil {
-		return fmt.Errorf("error deleting apps : %w", err)
-	}
-
-	// Clean up unused files. This can be done more aggressively, when older versions are deleted.
-	// Currently done only when an app is deleted. This cleanup is across apps, not just the deleted app.
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from files where sha not in (select distinct sha from app_files)`)); err != nil {
-		return err
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
+// Clean up unused files. This can be done more aggressively, when older versions are deleted.
+// Currently done only when an app is deleted. This cleanup is across apps, not just the deleted app.
+
 func (m *Metadata) GetAppsForDomain(domain string) ([]string, error) {
-	stmt, err := m.db.Prepare(system.RebindQuery(m.dbType, `select path from apps where domain = ?`))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query(domain)
-	if err != nil {
-		return nil, fmt.Errorf("error querying domain apps: %w", err)
-	}
-
-	paths := make([]string, 0)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var path string
-		err = rows.Scan(&path)
-		if err != nil {
-			return nil, fmt.Errorf("error scanning domain app: %w", err)
-		}
-		paths = append(paths, path)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-
-	return paths, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
+
+//nolint:errcheck
 
 func (m *Metadata) GetAllApps(includeInternal bool) ([]types.AppInfo, error) {
-	sqlStr := `select domain, path, is_dev, id, main_app, settings, metadata, source_url, update_time from apps`
-	if !includeInternal {
-		sqlStr += ` where main_app = ''`
-	}
-	sqlStr += ` order by create_time desc`
-
-	stmt, err := m.db.Prepare(sqlStr)
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query()
-	if err != nil {
-		return nil, fmt.Errorf("error querying all apps: %w", err)
-	}
-	apps := make([]types.AppInfo, 0)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var path, domain, id, mainApp, sourceUrl string
-		var isDev bool
-		var settingsStr, metadataStr sql.NullString
-		var updateTime *time.Time
-		err = rows.Scan(&domain, &path, &isDev, &id, &mainApp, &settingsStr, &metadataStr, &sourceUrl, &updateTime)
-		if err != nil {
-			return nil, fmt.Errorf("error querying next app: %w", err)
-		}
-
-		var metadata types.AppMetadata
-		var settings types.AppSettings
-
-		if metadataStr.Valid && metadataStr.String != "" {
-			err = json.Unmarshal([]byte(metadataStr.String), &metadata)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-			}
-		}
-
-		if settingsStr.Valid && settingsStr.String != "" {
-			err = json.Unmarshal([]byte(settingsStr.String), &settings)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling settings: %w", err)
-			}
-		}
-
-		retainVersions := m.config.AppConfig.FS.RetainVersions
-		if val, ok := metadata.AppConfig["fs.retain_versions"]; ok {
-			if intVal, err := strconv.Atoi(val); err == nil && intVal >= 0 {
-				retainVersions = intVal
-			}
-		}
-
-		apps = append(apps, types.CreateAppInfo(types.AppId(id), metadata.Name, path, domain, isDev,
-			types.AppId(mainApp), metadata.AuthnType, sourceUrl, metadata.Spec,
-			metadata.VersionMetadata.Version, metadata.VersionMetadata.GitCommit, metadata.VersionMetadata.GitMessage,
-			metadata.VersionMetadata.GitBranch, types.StripQuotes(metadata.AppConfig["star_base"]), *updateTime, retainVersions))
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-	return apps, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
+
+//nolint:errcheck
 
 // GetLinkedApps gets all the apps linked to the given main app (staging and preview apps)
 func (m *Metadata) GetLinkedApps(ctx context.Context, tx types.Transaction, mainAppId types.AppId) ([]*types.AppEntry, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, domain, main_app, source_url, is_dev, user_id, create_time, update_time, settings, metadata from apps where main_app = ?`))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query(mainAppId)
-	if err != nil {
-		return nil, fmt.Errorf("error querying linked apps: %w", err)
-	}
-	apps := make([]*types.AppEntry, 0)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var app types.AppEntry
-		var settings, metadata sql.NullString
-		err = rows.Scan(&app.Id, &app.Path, &app.Domain, &app.MainApp, &app.SourceUrl, &app.IsDev, &app.UserID, &app.CreateTime, &app.UpdateTime, &settings, &metadata)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				return apps, nil // No linked apps found, return empty slice
-			}
-			m.Error().Err(err).Msgf("query %s", mainAppId)
-			return nil, fmt.Errorf("error querying appy: %w", err)
-		}
-
-		if metadata.Valid && metadata.String != "" {
-			err = json.Unmarshal([]byte(metadata.String), &app.Metadata)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-			}
-		}
-
-		if settings.Valid && settings.String != "" {
-			err = json.Unmarshal([]byte(settings.String), &app.Settings)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling settings: %w", err)
-			}
-		}
-
-		apps = append(apps, &app)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-
-	return apps, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
+//nolint:errcheck
+
+//nolint:errcheck
+
+// No linked apps found, return empty slice
+
 func (m *Metadata) UpdateSourceUrl(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
-	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set source_url = ? where path = ? and domain = ?`), app.SourceUrl, app.Path, app.Domain)
-	if err != nil {
-		return fmt.Errorf("error updating app source url: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) UpdateAppMetadata(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
-	err := m.updateAppMetadata(ctx, tx, app.Path, app.Domain, &app.Metadata)
-	if err != nil {
-		return fmt.Errorf("error updating app metadata: %w", err)
-	}
-
-	metadataJson, err := json.Marshal(app.Metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-
-	if strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_PROD) || strings.HasPrefix(string(app.Id), types.ID_PREFIX_APP_STAGE) {
-		_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE app_versions set metadata = ? where appid = ? and version = ?`), string(metadataJson), app.Id, app.Metadata.VersionMetadata.Version)
-		if err != nil {
-			return fmt.Errorf("error updating app metadata: %w", err)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) updateAppMetadata(ctx context.Context, tx types.Transaction, path, domain string, metadata *types.AppMetadata) error {
-	metadataJson, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set metadata = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(metadataJson), path, domain)
-	if err != nil {
-		return fmt.Errorf("error updating app metadata: %w", err)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) UpdateAppSettings(ctx context.Context, tx types.Transaction, app *types.AppEntry) error {
-	return m.updateAppSettings(ctx, tx, app.Path, app.Domain, &app.Settings)
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (m *Metadata) updateAppSettings(ctx context.Context, tx types.Transaction, path, domain string, settings *types.AppSettings) error {
-	settingsJson, err := json.Marshal(settings)
-	if err != nil {
-		return fmt.Errorf("error marshalling settings: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE apps set settings = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ? and domain = ?`), string(settingsJson), path, domain)
-	if err != nil {
-		return fmt.Errorf("error updating app settings: %w", err)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) CreateSync(ctx context.Context, tx types.Transaction, sync *types.SyncEntry) error {
-	metadataJson, err := json.Marshal(sync.Metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-
-	statusJson, err := json.Marshal(sync.Status)
-	if err != nil {
-		return fmt.Errorf("error marshalling status: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `INSERT into sync(id, path, is_scheduled, user_id, create_time, metadata, status) values(?, ?, ?, ?, `+system.FuncNow(m.dbType)+", ?, ?)"),
-		sync.Id, sync.Path, sync.IsScheduled, sync.UserID, metadataJson, statusJson)
-	if err != nil {
-		return fmt.Errorf("error inserting sync entry: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) DeleteSync(ctx context.Context, tx types.Transaction, id string) error {
-	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from sync where id = ?`), id)
-	if err != nil {
-		return err
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no sync entry found with id for delete: %s", id)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 // GetSyncEntries gets all the sync entries for the given webhook type
 func (m *Metadata) GetSyncEntries(ctx context.Context, tx types.Transaction) ([]*types.SyncEntry, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, `select id, path, is_scheduled, user_id, create_time, metadata, status from sync`))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query()
-	if err != nil {
-		return nil, fmt.Errorf("error querying sync: %w", err)
-	}
-	syncEntries := make([]*types.SyncEntry, 0)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var sync types.SyncEntry
-		var metadata sql.NullString
-		var status sql.NullString
-		err = rows.Scan(&sync.Id, &sync.Path, &sync.IsScheduled, &sync.UserID, &sync.CreateTime, &metadata, &status)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				return syncEntries, nil // No entries found, return empty slice
-			}
-			return nil, fmt.Errorf("error querying sync: %w", err)
-		}
-
-		if metadata.Valid && metadata.String != "" {
-			err = json.Unmarshal([]byte(metadata.String), &sync.Metadata)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-			}
-		}
-
-		if status.Valid && status.String != "" {
-			err = json.Unmarshal([]byte(status.String), &sync.Status)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling status: %w", err)
-			}
-		}
-
-		syncEntries = append(syncEntries, &sync)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-
-	return syncEntries, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
+//nolint:errcheck
+
+//nolint:errcheck
+
+// No entries found, return empty slice
+
 func (m *Metadata) GetSyncEntry(ctx context.Context, tx types.Transaction, id string) (*types.SyncEntry, error) {
-	row := m.db.QueryRow(system.RebindQuery(m.dbType, `select id, path, is_scheduled, user_id, create_time, metadata, status from sync where id = ?`), id)
-	var sync types.SyncEntry
-	var metadata, status sql.NullString
-	err := row.Scan(&sync.Id, &sync.Path, &sync.IsScheduled, &sync.UserID, &sync.CreateTime, &metadata, &status)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, errors.New("sync entry not found with id: " + id)
-		}
-		m.Error().Err(err).Msgf("query %s", id)
-		return nil, fmt.Errorf("error querying sync entry: %w", err)
-	}
-	if metadata.Valid && metadata.String != "" {
-		err = json.Unmarshal([]byte(metadata.String), &sync.Metadata)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-		}
-	}
-	if status.Valid && status.String != "" {
-		err = json.Unmarshal([]byte(status.String), &sync.Status)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling status: %w", err)
-		}
-	}
-	return &sync, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (m *Metadata) UpdateSyncStatus(ctx context.Context, tx types.Transaction, id string, status *types.SyncJobStatus) error {
-	statusJson, err := json.Marshal(status)
-	if err != nil {
-		return fmt.Errorf("error marshalling status: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType, `UPDATE sync set status = ? where id = ?`), string(statusJson), id)
-	if err != nil {
-		return fmt.Errorf("error updating app status: %w", err)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
@@ -874,596 +224,192 @@ var ErrConfigAlreadyExists = errors.New("config already exists")
 var ErrConfigNotFound = errors.New("config not found")
 
 func (m *Metadata) InitConfig(ctx context.Context, user string, dynamicConfig *types.DynamicConfig) error {
-	configJson, err := json.Marshal(dynamicConfig)
-	if err != nil {
-		return fmt.Errorf("error marshalling dynamic config: %w", err)
-	}
-
-	tx, err := m.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error beginning transaction: %w", err)
-	}
-
-	defer tx.Rollback() //nolint:errcheck
-	countResult := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select count(*) from config`))
-	var rowCount int
-	err = countResult.Scan(&rowCount)
-	if err != nil {
-		return fmt.Errorf("error scanning config: %w", err)
-	}
-	if rowCount > 0 {
-		return ErrConfigAlreadyExists
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into config values (?, ?, `+system.FuncNow(m.dbType)+", ?)"),
-		dynamicConfig.VersionId, user, string(configJson))
-	if err != nil {
-		return fmt.Errorf("error inserting config: %w", err)
-	}
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("error committing transaction: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
-func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId string, dynamicConfig *types.DynamicConfig) error {
-	configJson, err := json.Marshal(dynamicConfig)
-	if err != nil {
-		return fmt.Errorf("error marshalling dynamic config: %w", err)
-	}
+//nolint:errcheck
 
-	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`update config set version_id = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+", user_id = ? where version_id = ?"),
-		dynamicConfig.VersionId, string(configJson), user, oldVersionId)
-	if err != nil {
-		return fmt.Errorf("error updating config: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no config entry found with version id for update: %s", oldVersionId)
-	}
+func (m *Metadata) UpdateConfig(ctx context.Context, user string, oldVersionId string, dynamicConfig *types.DynamicConfig) error {
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) GetConfig() (*types.DynamicConfig, error) {
-	var configStr sql.NullString
-	row := m.db.QueryRow(system.RebindQuery(m.dbType, `select config from config`))
-	err := row.Scan(&configStr)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrConfigNotFound
-		}
-		return nil, fmt.Errorf("error querying config: %w", err)
-	}
-
-	var config types.DynamicConfig
-	if configStr.Valid && configStr.String != "" {
-		err = json.Unmarshal([]byte(configStr.String), &config)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling config: %w", err)
-		}
-	}
-
-	return &config, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (m *Metadata) FetchKV(ctx context.Context, key string) (map[string]any, error) {
-	value, err := m.FetchKVBlob(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching value: %w", err)
-	}
-	var valueMap map[string]any
-	err = json.Unmarshal([]byte(value), &valueMap)
-	if err != nil {
-		return nil, fmt.Errorf("error unmarshalling value: %w", err)
-	}
-	return valueMap, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (m *Metadata) FetchKVBlob(ctx context.Context, key string) ([]byte, error) {
-	row := m.db.QueryRowContext(ctx, system.RebindQuery(m.dbType, `select value from keystore where key = ? and (delete_at is null or delete_at > `+system.FuncNow(m.dbType)+`)`), key)
-	var value []byte
-	err := row.Scan(&value)
-	if err != nil {
-		return nil, fmt.Errorf("error querying keystore: %w", err)
-	}
-	return value, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (m *Metadata) StoreKV(ctx context.Context, key string, value map[string]any, expireAt *time.Time) error {
-	valueJson, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("error marshalling value: %w", err)
-	}
-	return m.StoreKVBlob(ctx, key, valueJson, expireAt)
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (m *Metadata) StoreKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error {
-	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into keystore values (?, ?, `+system.FuncNow(m.dbType)+`, ?)`), key, value, toNullTime(expireAt))
-	if err != nil {
-		return fmt.Errorf("error storing value: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) UpsertKVBlob(ctx context.Context, key string, value []byte, expireAt *time.Time) error {
-	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`insert into keystore(key, value, create_time, delete_at) values (?, ?, `+system.FuncNow(m.dbType)+`, ?)
-		 on conflict(key) do update set value = excluded.value, delete_at = excluded.delete_at`),
-		key, value, toNullTime(expireAt))
-	if err != nil {
-		return fmt.Errorf("error upserting value: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) UpdateKV(ctx context.Context, key string, value map[string]any) error {
-	valueJson, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("error marshalling value: %w", err)
-	}
-	return m.UpdateKVBlob(ctx, key, valueJson)
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (m *Metadata) UpdateKVBlob(ctx context.Context, key string, value []byte) error {
-	result, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`update keystore set value = ? where key = ?`), value, key)
-	if err != nil {
-		return fmt.Errorf("error updating value: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no key entry found with key for update: %s", key)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) DeleteKV(ctx context.Context, key string) error {
-	_, err := m.db.ExecContext(ctx, system.RebindQuery(m.dbType, `delete from keystore where key = ?`), key)
-	if err != nil {
-		return fmt.Errorf("error deleting value: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) CleanupExpiredKV(ctx context.Context) error {
-	_, err := m.db.ExecContext(ctx, `delete from keystore where delete_at is not null and delete_at <= `+system.FuncNow(m.dbType))
-	if err != nil {
-		return fmt.Errorf("error cleaning up expired kv entries: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) CleanupAppVersions(app types.AppInfo) error {
-	m.Logger.Trace().Msgf("cleaning up app versions for app %s retain %d", app.AppPathDomain, app.RetainVersions)
-	if app.RetainVersions < 0 {
-		return nil
-	}
-
-	// The current version may not be the latest (e.g. after a rollback), so only
-	// consider versions <= the current one. Keep the current version plus
-	// RetainVersions older versions below it; delete everything older.
-	// OFFSET RetainVersions in a DESC-sorted list of versions <= current gives the
-	// oldest version to keep. If fewer versions exist, the subquery returns NULL
-	// and nothing is deleted.
-	cutoffQuery := `SELECT version FROM app_versions WHERE appid = ? AND version <= ? ORDER BY version DESC LIMIT 1 OFFSET ?`
-
-	_, err := m.db.Exec(system.RebindQuery(m.dbType,
-		`DELETE FROM app_versions WHERE appid = ? AND version < (`+cutoffQuery+`)`),
-		app.Id, app.Id, app.Version, app.RetainVersions)
-	if err != nil {
-		return fmt.Errorf("error cleaning up app versions: %w", err)
-	}
-
-	_, err = m.db.Exec(system.RebindQuery(m.dbType,
-		`DELETE FROM app_files WHERE appid = ? AND version < (`+cutoffQuery+`)`),
-		app.Id, app.Id, app.Version, app.RetainVersions)
-	if err != nil {
-		return fmt.Errorf("error cleaning up app files: %w", err)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
-func (m *Metadata) CleanupFiles() error {
-	result, err := m.db.Exec(`DELETE FROM files WHERE sha NOT IN (SELECT DISTINCT sha FROM app_files)`)
-	if err != nil {
-		return fmt.Errorf("error cleaning up files: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return nil
-	}
+// The current version may not be the latest (e.g. after a rollback), so only
+// consider versions <= the current one. Keep the current version plus
+// RetainVersions older versions below it; delete everything older.
+// OFFSET RetainVersions in a DESC-sorted list of versions <= current gives the
+// oldest version to keep. If fewer versions exist, the subquery returns NULL
+// and nothing is deleted.
 
-	if m.dbType == system.DB_TYPE_SQLITE {
-		_, err = m.db.Exec(`VACUUM`)
-		if err != nil {
-			return fmt.Errorf("error vacuuming files: %w", err)
-		}
-	}
-	return nil
-}
+func (m *Metadata) CleanupFiles() error { _ = "STUB: not implemented"; return nil }
 
 func (m *Metadata) createServiceBindings(ctx context.Context, tx types.Transaction) error {
-	_, err := tx.ExecContext(ctx, `create table services (id text not null, name text, service_type text, is_default bool, staging text not null default '', config json, create_time `+
-		system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(name, service_type), UNIQUE(id))")
-	if err != nil {
-		return fmt.Errorf("error creating services table: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx,
-		`CREATE UNIQUE INDEX services_one_default_per_type ON services(service_type) WHERE is_default`)
-	if err != nil {
-		return fmt.Errorf("error creating services default index: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `create table bindings (id text not null, path text, source text, service_type text not null default '', `+
-		`service_name text not null default '', base_binding text not null default '', metadata json, staged_metadata json, `+
-		`create_time `+system.MapDataType(m.dbType, "datetime")+", update_time "+system.MapDataType(m.dbType, "datetime")+", PRIMARY KEY(path), UNIQUE(id))")
-	if err != nil {
-		return fmt.Errorf("error creating bindings table: %w", err)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) CreateService(ctx context.Context, tx types.Transaction, service *types.Service) error {
-	configJson, err := json.Marshal(service.Config)
-	if err != nil {
-		return fmt.Errorf("error marshalling service config: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into services(id, name, service_type, is_default, staging, config, create_time, update_time) values(?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		service.Id, service.Name, service.ServiceType, service.IsDefault, service.Staging, string(configJson))
-	if err != nil {
-		return fmt.Errorf("error inserting service: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) UpdateService(ctx context.Context, tx types.Transaction, service *types.Service) error {
-	configJson, err := json.Marshal(service.Config)
-	if err != nil {
-		return fmt.Errorf("error marshalling service config: %w", err)
-	}
-
-	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`UPDATE services set is_default = ?, staging = ?, config = ?, update_time = `+system.FuncNow(m.dbType)+` where name = ? and service_type = ?`),
-		service.IsDefault, service.Staging, string(configJson), service.Name, service.ServiceType)
-	if err != nil {
-		return fmt.Errorf("error updating service: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no service found with name %s and service_type %s", service.Name, service.ServiceType)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) ServiceExists(ctx context.Context, tx types.Transaction, serviceType, name string) (bool, error) {
-	var count int
-	err := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select count(*) from services where service_type = ? and name = ?`), serviceType, name).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("error checking service: %w", err)
-	}
-	return count > 0, nil
+	_ = "STUB: not implemented"
+	return false, nil
 }
 
 // ClearServiceDefault unsets the is_default flag for any service of the given
 // service_type except for the service with the given name. If exceptName is empty,
 // the default flag is cleared for all services of that type.
 func (m *Metadata) ClearServiceDefault(ctx context.Context, tx types.Transaction, serviceType, exceptName string) error {
-	query := `UPDATE services set is_default = ?, update_time = ` + system.FuncNow(m.dbType) + ` where service_type = ? and is_default`
-	args := []any{false, serviceType}
-	if exceptName != "" {
-		query += ` and name <> ?`
-		args = append(args, exceptName)
-	}
-	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType, query), args...)
-	if err != nil {
-		return fmt.Errorf("error clearing default service: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) ClearServiceStaging(ctx context.Context, tx types.Transaction, serviceType, staging string) error {
-	_, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`UPDATE services set staging = ?, update_time = `+system.FuncNow(m.dbType)+` where service_type = ? and staging = ?`),
-		"", serviceType, staging)
-	if err != nil {
-		return fmt.Errorf("error clearing staging service: %w", err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 // CountServices returns the number of services of the given service_type.
 func (m *Metadata) CountServices(ctx context.Context, tx types.Transaction, serviceType string) (int, error) {
-	var count int
-	err := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select count(*) from services where service_type = ?`), serviceType).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("error counting services: %w", err)
-	}
-	return count, nil
+	_ = "STUB: not implemented"
+	return 0, nil
 }
 
 func (m *Metadata) DeleteService(ctx context.Context, tx types.Transaction, name, serviceType string) error {
-	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`delete from services where name = ? and service_type = ?`), name, serviceType)
-	if err != nil {
-		return fmt.Errorf("error deleting service: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no service found with name %s and service_type %s", name, serviceType)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) GetDefaultService(ctx context.Context, tx types.Transaction, serviceType string) (*types.Service, error) {
-	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and is_default`), serviceType)
-	var service types.Service
-	var configStr sql.NullString
-	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
-	if err != nil {
-		return nil, fmt.Errorf("error querying default service: %w", err)
-	}
-	if configStr.Valid && configStr.String != "" {
-		err = json.Unmarshal([]byte(configStr.String), &service.Config)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling service config: %w", err)
-		}
-	}
-	return &service, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (m *Metadata) GetService(ctx context.Context, tx types.Transaction, serviceType, name string) (*types.Service, error) {
-	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, name, service_type, is_default, staging, config, create_time, update_time from services where service_type = ? and name = ?`), serviceType, name)
-	var service types.Service
-	var configStr sql.NullString
-	err := row.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
-	if err != nil {
-		return nil, fmt.Errorf("error querying service: %w", err)
-	}
-
-	if configStr.Valid && configStr.String != "" {
-		err = json.Unmarshal([]byte(configStr.String), &service.Config)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling service config: %w", err)
-		}
-	}
-	return &service, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 // ListServices returns services filtered by the optional serviceType and name. Empty string means no filter.
 func (m *Metadata) ListServices(ctx context.Context, tx types.Transaction, serviceType, name string) ([]*types.Service, error) {
-	query := `select id, name, service_type, is_default, staging, config, create_time, update_time from services`
-	args := make([]any, 0, 2)
-	conds := make([]string, 0, 2)
-	if serviceType != "" {
-		conds = append(conds, `service_type = ?`)
-		args = append(args, serviceType)
-	}
-	if name != "" {
-		conds = append(conds, `name = ?`)
-		args = append(args, name)
-	}
-	if len(conds) > 0 {
-		query += ` where ` + strings.Join(conds, ` and `)
-	}
-	query += ` order by service_type, name`
-
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, query))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query(args...)
-	if err != nil {
-		return nil, fmt.Errorf("error querying services: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	services := make([]*types.Service, 0)
-	for rows.Next() {
-		var service types.Service
-		var configStr sql.NullString
-		err = rows.Scan(&service.Id, &service.Name, &service.ServiceType, &service.IsDefault, &service.Staging, &configStr, &service.CreateTime, &service.UpdateTime)
-		if err != nil {
-			return nil, fmt.Errorf("error scanning service: %w", err)
-		}
-		if configStr.Valid && configStr.String != "" {
-			err = json.Unmarshal([]byte(configStr.String), &service.Config)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling service config: %w", err)
-			}
-		}
-		services = append(services, &service)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-	return services, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
-func (m *Metadata) CreateBinding(ctx context.Context, tx types.Transaction, binding *types.Binding) error {
-	metadataJson, err := json.Marshal(binding.Metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling binding metadata: %w", err)
-	}
-	stagedMetadataJson, err := json.Marshal(binding.StagedMetadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling staged binding metadata: %w", err)
-	}
+//nolint:errcheck
 
-	_, err = tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`INSERT into bindings(id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, `+system.FuncNow(m.dbType)+`, `+system.FuncNow(m.dbType)+`)`),
-		binding.Id, binding.Path, binding.Source, binding.ServiceType, binding.ServiceName, binding.DerivedFrom, string(metadataJson), string(stagedMetadataJson))
-	if err != nil {
-		return fmt.Errorf("error inserting binding: %w", err)
-	}
+//nolint:errcheck
+
+func (m *Metadata) CreateBinding(ctx context.Context, tx types.Transaction, binding *types.Binding) error {
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) UpdateBinding(ctx context.Context, tx types.Transaction, binding *types.Binding) error {
-	metadataJson, err := json.Marshal(binding.Metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling binding metadata: %w", err)
-	}
-	stagedMetadataJson, err := json.Marshal(binding.StagedMetadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling staged binding metadata: %w", err)
-	}
-
-	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`UPDATE bindings set source = ?, service_type = ?, service_name = ?, base_binding = ?, metadata = ?, staged_metadata = ?, update_time = `+system.FuncNow(m.dbType)+` where path = ?`),
-		binding.Source, binding.ServiceType, binding.ServiceName, binding.DerivedFrom, string(metadataJson), string(stagedMetadataJson), binding.Path)
-	if err != nil {
-		return fmt.Errorf("error updating binding: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no binding found with path %s", binding.Path)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) DeleteBinding(ctx context.Context, tx types.Transaction, path string) error {
-	result, err := tx.ExecContext(ctx, system.RebindQuery(m.dbType,
-		`delete from bindings where path = ?`), path)
-	if err != nil {
-		return fmt.Errorf("error deleting binding: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no binding found with path %s", path)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (m *Metadata) GetBinding(ctx context.Context, tx types.Transaction, path string) (*types.Binding, error) {
-	row := tx.QueryRowContext(ctx, system.RebindQuery(m.dbType,
-		`select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings where path = ?`), path)
-
-	var binding types.Binding
-	var metadataStr, stagedMetadataStr sql.NullString
-	err := row.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.DerivedFrom, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("binding not found with path: %s", path)
-		}
-		return nil, fmt.Errorf("error querying binding: %w", err)
-	}
-
-	if metadataStr.Valid && metadataStr.String != "" {
-		if err = json.Unmarshal([]byte(metadataStr.String), &binding.Metadata); err != nil {
-			return nil, fmt.Errorf("error unmarshalling binding metadata: %w", err)
-		}
-	}
-	if stagedMetadataStr.Valid && stagedMetadataStr.String != "" {
-		if err = json.Unmarshal([]byte(stagedMetadataStr.String), &binding.StagedMetadata); err != nil {
-			return nil, fmt.Errorf("error unmarshalling staged binding metadata: %w", err)
-		}
-	}
-	return &binding, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 // ListBindings returns bindings filtered by the optional source. Empty string means no filter.
 func (m *Metadata) ListBindings(ctx context.Context, tx types.Transaction, source string) ([]*types.Binding, error) {
-	query := `select id, path, source, service_type, service_name, base_binding, metadata, staged_metadata, create_time, update_time from bindings`
-	args := make([]any, 0, 1)
-	if source != "" {
-		query += ` where source = ?`
-		args = append(args, source)
-	}
-	query += ` order by path`
-
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(m.dbType, query))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query(args...)
-	if err != nil {
-		return nil, fmt.Errorf("error querying bindings: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	bindings := make([]*types.Binding, 0)
-	for rows.Next() {
-		var binding types.Binding
-		var metadataStr, stagedMetadataStr sql.NullString
-		err = rows.Scan(&binding.Id, &binding.Path, &binding.Source, &binding.ServiceType, &binding.ServiceName, &binding.DerivedFrom, &metadataStr, &stagedMetadataStr, &binding.CreateTime, &binding.UpdateTime)
-		if err != nil {
-			return nil, fmt.Errorf("error scanning binding: %w", err)
-		}
-		if metadataStr.Valid && metadataStr.String != "" {
-			if err = json.Unmarshal([]byte(metadataStr.String), &binding.Metadata); err != nil {
-				return nil, fmt.Errorf("error unmarshalling binding metadata: %w", err)
-			}
-		}
-		if stagedMetadataStr.Valid && stagedMetadataStr.String != "" {
-			if err = json.Unmarshal([]byte(stagedMetadataStr.String), &binding.StagedMetadata); err != nil {
-				return nil, fmt.Errorf("error unmarshalling staged binding metadata: %w", err)
-			}
-		}
-		bindings = append(bindings, &binding)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-	return bindings, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
-func toNullTime(t *time.Time) sql.NullTime {
-	if t == nil {
-		return sql.NullTime{Valid: false}
-	}
-	return sql.NullTime{Time: t.UTC(), Valid: true}
-}
+//nolint:errcheck
+
+//nolint:errcheck
+
+func toNullTime(t *time.Time) sql.NullTime { _ = "STUB: not implemented"; return *new(sql.NullTime) }
 
 // BeginTransaction starts a new Transaction
 func (m *Metadata) BeginTransaction(ctx context.Context) (types.Transaction, error) {
-	tx, err := m.db.BeginTx(ctx, nil)
-	return types.Transaction{Tx: tx}, err
+	_ = "STUB: not implemented"
+	return *new(types.Transaction), nil
 }
 
 // CommitTransaction commits a transaction
 func (m *Metadata) CommitTransaction(tx types.Transaction) error {
-	return tx.Commit()
+	_ = "STUB: not implemented"
+	return nil
+
+	// RollbackTransaction rolls back a transaction
 }
 
-// RollbackTransaction rolls back a transaction
 func (m *Metadata) RollbackTransaction(tx types.Transaction) error {
-	return tx.Rollback()
+	_ = "STUB: not implemented"
+	return nil
 }

@@ -4,14 +4,9 @@
 package appfs
 
 import (
-	"bytes"
 	"embed"
-	"fmt"
-	"io"
 	"io/fs"
-	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -23,82 +18,56 @@ type EmbedReadFS struct {
 var _ ReadableFS = (*EmbedReadFS)(nil)
 
 func NewEmbedReadFS(logger *types.Logger, embedFS embed.FS) *EmbedReadFS {
-	return &EmbedReadFS{
-		Logger: logger,
-		fs:     embedFS,
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (e *EmbedReadFS) Open(name string) (fs.File, error) {
-	return e.fs.Open(name)
+	_ = "STUB: not implemented"
+	return *new(fs.File), nil
 }
 
 func (e *EmbedReadFS) ReadFile(name string) ([]byte, error) {
-	file, err := e.fs.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close() //nolint:errcheck
-
-	buf := new(bytes.Buffer)
-	_, err = io.Copy(buf, file)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
-func (e *EmbedReadFS) Stat(name string) (fs.FileInfo, error) {
-	bytes, err := e.ReadFile(name)
-	if err != nil {
-		return nil, err
-	}
+//nolint:errcheck
 
-	fi := DiskFileInfo{
-		name:    name,
-		len:     int64(len(bytes)),
-		modTime: time.Now(),
-	}
-	return &fi, nil
+func (e *EmbedReadFS) Stat(name string) (fs.FileInfo, error) {
+	_ = "STUB: not implemented"
+	return *new(fs.FileInfo), nil
 }
 
 func (e *EmbedReadFS) StatNoSpec(name string) (fs.FileInfo, error) {
-	return e.Stat(name)
+	_ = "STUB: not implemented"
+	return *new(fs.FileInfo), nil
 }
 
 func (e *EmbedReadFS) Glob(pattern string) (matches []string, err error) {
-	return fs.Glob(e.fs, pattern)
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (e *EmbedReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	return fs.ReadDir(e.fs, name)
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
-func (e *EmbedReadFS) StaticFiles() []string {
-	staticFiles, err := doublestar.Glob(e.fs, "static/**/*")
-	if err != nil {
-		e.Logger.Err(err).Msg("error getting static files")
-		return nil
-	}
-
-	var staticRootFiles []string
-	staticRootFiles, err = doublestar.Glob(e.fs, "static_root/**/*")
-	if err != nil {
-		e.Logger.Err(err).Msg("error getting static_root files")
-		return nil
-	}
-	staticFiles = append(staticFiles, staticRootFiles...)
-	return staticFiles
-}
+func (e *EmbedReadFS) StaticFiles() []string { _ = "STUB: not implemented"; return nil }
 
 func (e *EmbedReadFS) FileHash(excludeGlob []string) (string, error) {
-	return "", fmt.Errorf("FileHash not implemented for dev apps : DiskReadFS")
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
 func (e *EmbedReadFS) CreateTempSourceDir() (string, error) {
-	return "", fmt.Errorf("CreateTempSourceDir not implemented for dev apps : DiskReadFS")
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
 func (e *EmbedReadFS) Reset() {
+	_ = "STUB: not implemented"
 	// do nothing
+	return
 }

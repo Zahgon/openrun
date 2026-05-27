@@ -5,13 +5,6 @@ package container
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"text/template"
 
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -69,27 +62,20 @@ type DevContainerManager interface {
 }
 
 func GenContainerName(appId types.AppId, cm ContainerManager, contentHash string, supportsInPlaceUpdate bool) ContainerName {
-	if supportsInPlaceUpdate {
-		return ContainerName(fmt.Sprintf("clc-%s", appId))
-	} else {
-		return ContainerName(fmt.Sprintf("clc-%s-%s", appId, genLowerCaseId(contentHash)))
-	}
+	_ = "STUB: not implemented"
+	return *new(ContainerName)
 }
 
 const IMAGE_NAME_PREFIX = "cli-"
 
 func GenImageName(appId types.AppId, contentHash string) ImageName {
-	if contentHash == "" {
-		return ImageName(fmt.Sprintf("%s%s", IMAGE_NAME_PREFIX, appId))
-	} else {
-		return ImageName(fmt.Sprintf("%s%s:%s", IMAGE_NAME_PREFIX, appId, genLowerCaseId(contentHash)))
-	}
+	_ = "STUB: not implemented"
+	return *new(ImageName)
 }
 
 func GenVolumeName(appId types.AppId, dirName string) VolumeName {
-	dirHash := sha256.Sum256([]byte(dirName))
-	hashHex := hex.EncodeToString(dirHash[:])
-	return VolumeName(fmt.Sprintf("clv-%s-%s", appId, strings.ToLower(hashHex)))
+	_ = "STUB: not implemented"
+	return *new(VolumeName)
 }
 
 // DigestPinned returns image with the given digest appended, replacing any
@@ -103,46 +89,22 @@ func GenVolumeName(appId types.AppId, dirName string) VolumeName {
 // Both Docker and Kubernetes accept "repo:tag@digest" references; when both
 // are present the digest is authoritative. Returns image unchanged if either
 // argument is empty.
-func DigestPinned(image, digest string) string {
-	if image == "" || digest == "" {
-		return image
-	}
-	base := image
-	if i := strings.Index(base, "@"); i != -1 {
-		base = base[:i]
-	}
-	return base + "@" + digest
-}
+func DigestPinned(image, digest string) string { _ = "STUB: not implemented"; return "" }
 
 // renderTemplate reads the source template file, executes it with the given data,
 // and writes the output to the target file.
 func renderTemplate(srcFilename, targetFilename string, data map[string]any) error {
+	_ = "STUB: not implemented"
 	// Parse the source file as a template
-	tmpl, err := template.ParseFiles(srcFilename)
-	if err != nil {
-		return fmt.Errorf("failed to parse template file: %w", err)
-	}
-
-	// Create the target file (overwrite if it exists)
-	targetFile, err := os.Create(targetFilename)
-	if err != nil {
-		return fmt.Errorf("failed to create target file: %w", err)
-	}
-	defer targetFile.Close() //nolint:errcheck
-
-	// Execute the template with data, writing output to the target file
-	if err := tmpl.Execute(targetFile, data); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
 	return nil
 }
 
-func makeAbsolute(sourceDir, path string) string {
-	if strings.HasPrefix(path, "/") {
-		return path
-	}
-	return filepath.Join(sourceDir, path)
-}
+// Create the target file (overwrite if it exists)
+
+//nolint:errcheck
+
+// Execute the template with data, writing output to the target file
+
+func makeAbsolute(sourceDir, path string) string { _ = "STUB: not implemented"; return "" }
 
 const UNNAMED_VOLUME = "<UNNAMED>"

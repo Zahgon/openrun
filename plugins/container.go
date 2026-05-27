@@ -4,16 +4,11 @@
 package plugins
 
 import (
-	"cmp"
-	"errors"
-	"fmt"
-
 	"github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
 )
 
 func init() {
@@ -35,51 +30,16 @@ type containerPlugin struct {
 }
 
 func NewContainerPlugin(pluginContext *types.PluginContext) (any, error) {
-	return &containerPlugin{pluginContext: pluginContext}, nil
+	_ = "STUB: not implemented"
+	return *new(any), nil
 }
 
 func (c *containerPlugin) Run(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	ch := thread.Local(types.TL_CONTAINER_HANDLER)
-	if ch == nil {
-		panic(errors.New("container config not initialized"))
-	}
-	handler, ok := ch.(*app.ContainerHandler)
-	if !ok {
-		return nil, fmt.Errorf("expected container manager, got %T", ch)
-	}
-	return execCommand(handler, thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (c *containerPlugin) Config(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var src, lifetime, scheme, health, buildDir starlark.String
-	var port starlark.Int
-	var cargs *starlark.Dict
-	var volumes *starlark.List
-	if err := starlark.UnpackArgs("config", args, kwargs, "src?", &src, "port?", &port, "scheme?", &scheme,
-		"health?", &health, "lifetime?", &lifetime, "build_dir?", &buildDir, "volumes?", &volumes, "cargs", &cargs); err != nil {
-		return nil, err
-	}
-
-	if cargs == nil {
-		cargs = starlark.NewDict(0)
-	}
-	portInt, ok := port.Int64()
-	if !ok || portInt < 0 {
-		return nil, fmt.Errorf("port must be an integer higher than or equal to zero")
-	}
-
-	volumes = cmp.Or(volumes, starlark.NewList([]starlark.Value{}))
-
-	fields := starlark.StringDict{
-		"source":    starlark.String(cmp.Or(string(src), "auto")),
-		"lifetime":  starlark.String(cmp.Or(string(lifetime), "app")),
-		"port":      port,
-		"scheme":    starlark.String(cmp.Or(string(scheme), "http")),
-		"health":    starlark.String(cmp.Or(string(health), "/")),
-		"build_dir": buildDir,
-		"volumes":   volumes,
-		"cargs":     cargs,
-	}
-
-	return starlarkstruct.FromStringDict(starlark.String("container_config"), fields), nil
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }

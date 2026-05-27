@@ -6,7 +6,6 @@ package app
 import (
 	"context"
 
-	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
 )
 
@@ -16,16 +15,6 @@ import (
 // stays consistent across call sites. The fallback is used when the previous
 // value was unset (typically the originating http.Request context).
 func pushThreadContext(thread *starlark.Thread, ctx context.Context, fallback context.Context) func() {
-	prev := thread.Local(types.TL_CONTEXT)
-	thread.SetLocal(types.TL_CONTEXT, ctx)
-	return func() {
-		switch {
-		case prev != nil:
-			thread.SetLocal(types.TL_CONTEXT, prev)
-		case fallback != nil:
-			thread.SetLocal(types.TL_CONTEXT, fallback)
-		default:
-			thread.SetLocal(types.TL_CONTEXT, nil)
-		}
-	}
+	_ = "STUB: not implemented"
+	return nil
 }

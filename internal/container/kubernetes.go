@@ -5,34 +5,13 @@ package container
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"os"
-	"path"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
 
-	"github.com/go-viper/mapstructure/v2"
 	"github.com/openrundev/openrun/internal/types"
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	core "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"k8s.io/apimachinery/pkg/util/intstr"
-	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
-	autoscalingv2apply "k8s.io/client-go/applyconfigurations/autoscaling/v2"
 	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1apply "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -48,31 +27,8 @@ type KubernetesOptions struct {
 }
 
 func parseKubernetesOptions(options map[string]string) (KubernetesOptions, error) {
-	var ret KubernetesOptions
-	updatedOptions := make(map[string]string)
-	kubernetesPrefix := "kubernetes."
-
-	for k, v := range options {
-		if strings.HasPrefix(k, kubernetesPrefix) {
-			updatedOptions[strings.TrimPrefix(k, kubernetesPrefix)] = v
-		} else if slices.Contains(KNOWN_OPTIONS, k) {
-			updatedOptions[k] = v
-		}
-	}
-
-	config := &mapstructure.DecoderConfig{
-		WeaklyTypedInput: true,
-		Result:           &ret,
-	}
-	decoder, err := mapstructure.NewDecoder(config)
-	if err != nil {
-		return KubernetesOptions{}, err
-	}
-	err = decoder.Decode(updatedOptions)
-	if err != nil {
-		return KubernetesOptions{}, err
-	}
-	return ret, nil
+	_ = "STUB: not implemented"
+	return *new(KubernetesOptions), nil
 }
 
 type KubernetesCM struct {
@@ -86,496 +42,131 @@ type KubernetesCM struct {
 	appId        types.AppId
 }
 
-func sanitizeContainerName(name string) string {
-	name = sanitizeName(name)
-	if len(name) > 50 {
-		name = name[:50] // max length for a Kubernetes object name is 63, leave space for the suffix
-	}
-	return name
-}
+func sanitizeContainerName(name string) string { _ = "STUB: not implemented"; return "" }
+
+// max length for a Kubernetes object name is 63, leave space for the suffix
 
 // TrimLabelValue trims the input string to 63 characters so that it can be used as a Kubernetes label value
-func TrimLabelValue(input string) string {
-	if len(input) > 63 {
-		input = input[:63]
-	}
-	return input
-}
+func TrimLabelValue(input string) string { _ = "STUB: not implemented"; return "" }
 
 // isPodReady checks if a pod is both running and has the Ready condition set to True.
 // This is important because Kubernetes Services only route traffic to Ready pods.
-func isPodReady(pod *core.Pod) bool {
-	if pod.Status.Phase != core.PodRunning {
-		return false
-	}
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == core.PodReady && condition.Status == core.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
+func isPodReady(pod *core.Pod) bool { _ = "STUB: not implemented"; return false }
 
-func currentNamespace() (string, error) {
-	b, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(b)), nil
-}
+func currentNamespace() (string, error) { _ = "STUB: not implemented"; return "", nil }
 
 func namespaceExists(ctx context.Context, client kubernetes.Interface, name string) (bool, error) {
-	_, err := client.CoreV1().Namespaces().Get(ctx, name, meta.GetOptions{})
-	if err == nil {
-		return true, nil
-	}
-	if apierrors.IsNotFound(err) {
-		return false, nil
-	}
-	return false, err // real error (RBAC, network, etc.)
+	_ = "STUB: not implemented"
+	return false, nil
 }
 
+// real error (RBAC, network, etc.)
+
 func NewKubernetesCM(logger *types.Logger, config *types.ServerConfig, appConfig *types.AppConfig, appRunDir string, appId types.AppId) (*KubernetesCM, error) {
-	cfg, err := loadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("error loading config: %w", err)
-	}
-	clientSet, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("error creating clientset: %w", err)
-	}
-
-	namespace, err := currentNamespace()
-	if err != nil {
-		logger.Warn().Msgf("error getting current namespace: %v", err)
-		namespace = config.Kubernetes.Namespace
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace not specified and not running in cluster")
-	}
-	appNamespace := namespace + "-apps"
-	appNamespaceExists, err := namespaceExists(context.Background(), clientSet, appNamespace)
-	if err != nil {
-		return nil, fmt.Errorf("error checking if app namespace exists: %w", err)
-	}
-	if !appNamespaceExists {
-		return nil, fmt.Errorf("app namespace %s does not exist", appNamespace)
-	}
-
-	return &KubernetesCM{
-		Logger:       logger,
-		appNamespace: appNamespace,
-		config:       config,
-		restConfig:   cfg,
-		clientSet:    clientSet,
-		appConfig:    appConfig,
-		appRunDir:    appRunDir,
-		appId:        appId,
-	}, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 var _ ContainerManager = (*KubernetesCM)(nil)
 
 func loadConfig() (*rest.Config, error) {
+	_ = "STUB: not implemented"
 	// Try in-cluster; fall back to default kubeconfig
-	cfg, err := rest.InClusterConfig()
-	if err == nil {
-		return cfg, nil
-	}
-	return clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+	return nil, nil
 }
 
-func (k *KubernetesCM) SupportsInPlaceUpdate() bool {
-	return true
-}
+func (k *KubernetesCM) SupportsInPlaceUpdate() bool { _ = "STUB: not implemented"; return false }
 
 func (k *KubernetesCM) ImageExists(ctx context.Context, name ImageName) (bool, error) {
-	if k.config.Registry.URL == "" {
-		return false, fmt.Errorf("registry url is required for kubernetes container manager")
-	}
-	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry)
+	_ = "STUB: not implemented"
+	return false, nil
 }
 
 // RefreshImage is a no-op on Kubernetes. Returning an empty digest leaves the existing identity hash and
 // container lifecycle on Kubernetes unchanged.
 func (k *KubernetesCM) RefreshImage(ctx context.Context, name ImageName) (string, error) {
+	_ = "STUB: not implemented"
 	return "", nil
 }
 
 func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, sourceUrl, containerFile string, containerArgs map[string]string) error {
-	if k.config.Registry.URL == "" {
-		return fmt.Errorf("registry url is required for kubernetes container manager")
-	}
-
-	targetUrl, found := strings.CutPrefix(k.config.Builder.Mode, "delegate:")
-	if found {
-		if k.config.System.BuilderAuthToken == "" {
-			return fmt.Errorf("system.builder_auth_token must be set when using delegated builds")
-		}
-		err := sendDelegateBuild(targetUrl, DelegateRequest{
-			ImageTag:       string(imgName),
-			ContainerFile:  containerFile,
-			ContainerArgs:  containerArgs,
-			RegistryConfig: &k.config.Registry,
-		}, sourceUrl, k.config.System.BuilderAuthToken)
-		if err != nil {
-			return fmt.Errorf("error sending delegate build: %w", err)
-		}
-		return nil
-	}
-
-	if k.config.Builder.Mode == "command" || k.config.Builder.Mode == "podman" || k.config.Builder.Mode == "docker" || strings.HasPrefix(k.config.Builder.Mode, "/") {
-		containerCommand := k.config.Builder.Mode
-		if k.config.Builder.Mode == "command" {
-			containerCommand = LookupContainerCommand(false)
-			if containerCommand == "" {
-				return fmt.Errorf("no container command found, install podman or docker")
-			}
-		}
-		return buildImageCommand(ctx, k.Logger, k.config, imgName, sourceUrl, containerFile, containerArgs, containerCommand)
-	}
-
-	if k.config.Builder.Mode != "kaniko" && k.config.Builder.Mode != "auto" {
-		return fmt.Errorf("invalid builder mode for kubernetes container manager: %s", k.config.Builder.Mode)
-	}
-
-	var destination string
-	if k.config.Registry.Project != "" {
-		destination = k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imgName)
-	} else {
-		destination = k.config.Registry.URL + "/" + string(imgName)
-	}
-
-	// Generate Docker config JSON only for Kaniko (which needs it as a Kubernetes secret)
-	dockerCfgJSON, err := GenerateDockerConfigJSON(&k.config.Registry)
-	if err != nil {
-		return fmt.Errorf("error generating docker config json: %w", err)
-	}
-
-	appId, _, _ := strings.Cut(string(imgName), ":")
-	kanikoBuild := KanikoBuild{
-		Namespace:     k.config.Kubernetes.Namespace,
-		JobName:       fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
-		Image:         k.config.Builder.KanikoImage,
-		SourceDir:     sourceUrl,
-		Dockerfile:    containerFile,
-		Destination:   destination,
-		ContainerArgs: containerArgs,
-		ExtraArgs:     []string{"--verbosity=debug"},
-	}
-	return KanikoJob(ctx, k.Logger, k.clientSet, k.restConfig, &k.config.Registry, dockerCfgJSON, kanikoBuild)
+	_ = "STUB: not implemented"
+	return nil
 }
+
+// Generate Docker config JSON only for Kaniko (which needs it as a Kubernetes secret)
 
 func (k *KubernetesCM) GetContainerState(ctx context.Context, name ContainerName, expectHash string) (string, bool, error) {
-	name = ContainerName(sanitizeContainerName(string(name)))
-	svc, err := k.clientSet.CoreV1().
-		Services(k.appNamespace).
-		Get(ctx, string(name), meta.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("get service %s/%s: %w", k.appNamespace, string(name), err)
-	}
-	if len(svc.Spec.Ports) == 0 {
-		return "", false, fmt.Errorf("service %s/%s has no ports", k.appNamespace, string(name))
-	}
-
-	svcPort := svc.Spec.Ports[0].Port
-	hostNamePort := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, svcPort)
-	if k.config.Kubernetes.UseNodePort {
-		hostNamePort = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
-	}
-
-	dep, err := k.clientSet.AppsV1().
-		Deployments(k.appNamespace).
-		Get(ctx, string(name), meta.GetOptions{})
-	if err != nil {
-		return "", false, fmt.Errorf("get deployment %s/%s: %w", k.appNamespace, string(name), err)
-	}
-
-	if expectHash != "" && dep.Spec.Template.Labels[VERSION_HASH_LABEL] != TrimLabelValue(expectHash) {
-		// version hash mismatch, deployment is not in the correct state
-		k.Logger.Warn().Msgf("deployment version hash mismatch: expected %s, got %s", TrimLabelValue(expectHash), dep.Spec.Template.Labels[VERSION_HASH_LABEL])
-		return "", false, nil
-	}
-
-	updateCompleted := false
-	if k.appConfig.Kubernetes.StrictVersionCheck {
-		if dep.Spec.Replicas != nil {
-			desired := *dep.Spec.Replicas
-			updateCompleted = dep.Status.ObservedGeneration == dep.Generation &&
-				dep.Status.UpdatedReplicas == desired &&
-				dep.Status.ReadyReplicas == desired &&
-				dep.Status.UnavailableReplicas == 0 &&
-				dep.Status.Replicas == *dep.Spec.Replicas
-		}
-	} else {
-		updateCompleted = true
-	}
-
-	// Get the pods which are part of this deployment
-	pods, err := k.clientSet.CoreV1().Pods(k.appNamespace).List(ctx, meta.ListOptions{
-		LabelSelector: fmt.Sprintf("app=%s", string(name)),
-	})
-	if err != nil {
-		return "", false, fmt.Errorf("list pods for deployment %s/%s: %w", k.appNamespace, string(name), err)
-	}
-
-	runningCount := 0
-	for _, pod := range pods.Items {
-		if isPodReady(&pod) && (expectHash == "" || pod.Labels[VERSION_HASH_LABEL] == TrimLabelValue(expectHash)) {
-			runningCount++
-		}
-	}
-
-	k.Logger.Debug().Msgf("GetContainerState hostNamePort %s runningCount %d updateCompleted %t", hostNamePort, runningCount, updateCompleted)
-	return hostNamePort, updateCompleted && runningCount > 0, nil
+	_ = "STUB: not implemented"
+	return "", false, nil
 }
 
+// version hash mismatch, deployment is not in the correct state
+
+// Get the pods which are part of this deployment
+
 func (k *KubernetesCM) StartContainer(ctx context.Context, name ContainerName) error {
-	name = ContainerName(sanitizeContainerName(string(name)))
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		scale, err := k.clientSet.AppsV1().Deployments(k.appNamespace).GetScale(ctx, string(name), meta.GetOptions{})
-		if err != nil {
-			return err
-		}
-		scale.Spec.Replicas = 1
-		_, err = k.clientSet.AppsV1().Deployments(k.appNamespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
-		return err
-	})
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (k *KubernetesCM) StopContainer(ctx context.Context, name ContainerName) error {
-	name = ContainerName(sanitizeContainerName(string(name)))
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		scale, err := k.clientSet.AppsV1().Deployments(k.appNamespace).GetScale(ctx, string(name), meta.GetOptions{})
-		if err != nil {
-			return err
-		}
-		scale.Spec.Replicas = 0 // scale down to zero
-		_, err = k.clientSet.AppsV1().Deployments(k.appNamespace).UpdateScale(ctx, string(name), scale, meta.UpdateOptions{})
-		return err
-	})
+	_ = "STUB: not implemented"
+	return nil
 }
+
+// scale down to zero
 
 func (k *KubernetesCM) RunContainer(ctx context.Context, appEntry *types.AppEntry, sourceDir string, containerName ContainerName,
 	imageName ImageName, port int32, envMap map[string]string, volumes []*VolumeInfo,
 	containerOptions map[string]string, paramMap map[string]string, versionHash string, isImageSpec bool) error {
-	if strings.HasPrefix(string(imageName), IMAGE_NAME_PREFIX) {
-		if k.config.Registry.Project != "" {
-			imageName = ImageName(k.config.Registry.URL + "/" + k.config.Registry.Project + "/" + string(imageName))
-		} else {
-			imageName = ImageName(k.config.Registry.URL + "/" + string(imageName))
-		}
-	}
-	kubernetesOptions, err := parseKubernetesOptions(containerOptions)
-	if err != nil {
-		return fmt.Errorf("error parsing kubernetes options: %w", err)
-	}
-	containerName = ContainerName(sanitizeContainerName(string(containerName)))
-	hostNamePort, err := k.createDeployment(ctx, string(containerName), string(imageName), port, envMap,
-		volumes, sourceDir, paramMap, appEntry, versionHash, kubernetesOptions, isImageSpec)
-	if err != nil {
-		return fmt.Errorf("create app: %w", err)
-	}
-	k.Logger.Info().Msgf("created app service %s with host name port %s", containerName, hostNamePort)
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func (k *KubernetesCM) GetContainerLogs(ctx context.Context, name ContainerName, linesToShow int) (string, error) {
-	name = ContainerName(sanitizeContainerName(string(name)))
-
-	// List pods with the matching label
-	pods, err := k.clientSet.CoreV1().Pods(k.appNamespace).List(ctx, meta.ListOptions{
-		LabelSelector: fmt.Sprintf("app=%s", string(name)),
-	})
-	if err != nil {
-		return "", fmt.Errorf("list pods for %s: %w", name, err)
-	}
-
-	if len(pods.Items) == 0 {
-		return "", fmt.Errorf("no pods found for %s", name)
-	}
-
-	// Get the first pod
-	pod := pods.Items[0]
-	if len(pod.Spec.Containers) == 0 {
-		return "", fmt.Errorf("no containers found in pod %s", pod.Name)
-	}
-
-	// Get logs from the first container
-	containerName := pod.Spec.Containers[0].Name
-	tailLines := int64(linesToShow)
-	logOptions := &core.PodLogOptions{
-		Container: containerName,
-		TailLines: &tailLines,
-	}
-
-	req := k.clientSet.CoreV1().Pods(k.appNamespace).GetLogs(pod.Name, logOptions)
-	logStream, err := req.Stream(ctx)
-	if err != nil {
-		return "", fmt.Errorf("get logs for pod %s container %s: %w", pod.Name, containerName, err)
-	}
-	defer logStream.Close() //nolint:errcheck
-
-	buf := new(strings.Builder)
-	if _, err := io.Copy(buf, logStream); err != nil {
-		return "", fmt.Errorf("read logs for pod %s container %s: %w", pod.Name, containerName, err)
-	}
-
-	return buf.String(), nil
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
+// List pods with the matching label
+
+// Get the first pod
+
+// Get logs from the first container
+
+//nolint:errcheck
+
 func (k *KubernetesCM) VolumeExists(ctx context.Context, name VolumeName) bool {
-	pvcName := sanitizeContainerName(string(name))
-	_, err := k.clientSet.CoreV1().
-		PersistentVolumeClaims(k.appNamespace).
-		Get(ctx, pvcName, meta.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return false
-		}
-		k.Logger.Warn().Err(err).Msgf("error checking if PVC %s exists", pvcName)
-		return false
-	}
-	return true
+	_ = "STUB: not implemented"
+	return false
 }
 
 func (k *KubernetesCM) VolumeCreate(ctx context.Context, name VolumeName) error {
-	size, err := resource.ParseQuantity(k.appConfig.Kubernetes.DefaultVolumeSize)
-	if err != nil {
-		return fmt.Errorf("error parsing default volume size %s: %w", k.appConfig.Kubernetes.DefaultVolumeSize, err)
-	}
-	pvcName := sanitizeContainerName(string(name))
-	pvc := corev1apply.PersistentVolumeClaim(pvcName, k.appNamespace).
-		WithSpec(corev1apply.PersistentVolumeClaimSpec().
-			WithAccessModes(core.ReadWriteOnce). // TODO: support other access modes
-			WithResources(corev1apply.VolumeResourceRequirements().
-				WithRequests(core.ResourceList{
-					core.ResourceStorage: size,
-				})))
-
-	_, err = k.clientSet.CoreV1().
-		PersistentVolumeClaims(k.appNamespace).
-		Apply(ctx, pvc, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER})
-	if err != nil {
-		return fmt.Errorf("apply PersistentVolumeClaim %s: %w", pvcName, err)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
+
+// TODO: support other access modes
 
 // processVolumes converts VolumeInfo entries to Kubernetes Volume and VolumeMount configurations.
 // It creates Secrets for secret volumes, ConfigMaps for volumes without a VolumeName, and
 // references existing PVCs for named volumes.
 func (k *KubernetesCM) processVolumes(ctx context.Context, name string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string) (
 	[]*corev1apply.VolumeApplyConfiguration, []*corev1apply.VolumeMountApplyConfiguration, error) {
-
-	var podVolumes []*corev1apply.VolumeApplyConfiguration
-	var volumeMounts []*corev1apply.VolumeMountApplyConfiguration
-	volIndex := 0
-
-	for _, vol := range volumes {
-		if vol.IsSecret {
-			// Create a Secret from the source file and mount it
-			secretName := fmt.Sprintf("%s-secret-%d", name, volIndex)
-			volIndex++
-
-			srcFile := makeAbsolute(sourceDir, vol.SourcePath)
-			destFile := path.Join(k.appRunDir, path.Base(vol.SourcePath)+".gen")
-			data := map[string]any{"params": paramMap}
-			if sourceDir != "" {
-				err := renderTemplate(srcFile, destFile, data)
-				if err != nil {
-					return nil, nil, fmt.Errorf("error rendering template %s: %w", srcFile, err)
-				}
-			}
-
-			secretData, err := os.ReadFile(destFile)
-			if err != nil {
-				return nil, nil, fmt.Errorf("read secret gen file %s: %w", destFile, err)
-			}
-
-			fileName := filepath.Base(vol.TargetPath)
-			secretApply := corev1apply.Secret(secretName, k.appNamespace).
-				WithData(map[string][]byte{fileName: secretData})
-
-			if _, err := k.clientSet.CoreV1().Secrets(k.appNamespace).Apply(
-				ctx, secretApply, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
-				return nil, nil, fmt.Errorf("apply secret %s: %w", secretName, err)
-			}
-
-			podVolumes = append(podVolumes, corev1apply.Volume().
-				WithName(secretName).
-				WithSecret(corev1apply.SecretVolumeSource().
-					WithSecretName(secretName)))
-
-			volumeMounts = append(volumeMounts, corev1apply.VolumeMount().
-				WithName(secretName).
-				WithMountPath(vol.TargetPath).
-				WithSubPath(fileName).
-				WithReadOnly(true))
-			continue
-		}
-
-		if vol.VolumeName == "" {
-			// Create a ConfigMap from the source file and mount it
-			configMapName := fmt.Sprintf("%s-config-%d", name, volIndex)
-			volIndex++
-
-			srcFile := makeAbsolute(sourceDir, vol.SourcePath)
-			data, err := os.ReadFile(srcFile)
-			if err != nil {
-				return nil, nil, fmt.Errorf("read config file %s: %w", srcFile, err)
-			}
-
-			fileName := filepath.Base(vol.TargetPath)
-			configMapApply := corev1apply.ConfigMap(configMapName, k.appNamespace).
-				WithData(map[string]string{fileName: string(data)})
-
-			if _, err := k.clientSet.CoreV1().ConfigMaps(k.appNamespace).Apply(
-				ctx, configMapApply, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
-				return nil, nil, fmt.Errorf("apply configmap %s: %w", configMapName, err)
-			}
-
-			podVolumes = append(podVolumes, corev1apply.Volume().
-				WithName(configMapName).
-				WithConfigMap(corev1apply.ConfigMapVolumeSource().
-					WithName(configMapName)))
-
-			volumeMounts = append(volumeMounts, corev1apply.VolumeMount().
-				WithName(configMapName).
-				WithMountPath(vol.TargetPath).
-				WithSubPath(fileName).
-				WithReadOnly(vol.ReadOnly))
-			continue
-		}
-
-		dir := vol.VolumeName
-		if dir == UNNAMED_VOLUME {
-			// unnamed volume, use the path for generating the volume name
-			dir = vol.TargetPath
-		}
-
-		// PVC-based volume (already created via VolumeCreate)
-		genVolumeName := GenVolumeName(k.appId, dir)
-		pvcName := sanitizeContainerName(string(genVolumeName))
-		volumeName := pvcName // use the same name for the volume reference
-
-		podVolumes = append(podVolumes, corev1apply.Volume().
-			WithName(volumeName).
-			WithPersistentVolumeClaim(corev1apply.PersistentVolumeClaimVolumeSource().
-				WithClaimName(pvcName).
-				WithReadOnly(vol.ReadOnly)))
-
-		volumeMounts = append(volumeMounts, corev1apply.VolumeMount().
-			WithName(volumeName).
-			WithMountPath(vol.TargetPath).
-			WithReadOnly(vol.ReadOnly))
-	}
-
-	return podVolumes, volumeMounts, nil
+	_ = "STUB: not implemented"
+	return nil, nil, nil
 }
+
+// Create a Secret from the source file and mount it
+
+// Create a ConfigMap from the source file and mount it
+
+// unnamed volume, use the path for generating the volume name
+
+// PVC-based volume (already created via VolumeCreate)
+
+// use the same name for the volume reference
 
 const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 
@@ -583,208 +174,40 @@ const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
 func (k *KubernetesCM) createDeployment(ctx context.Context, name, image string,
 	port int32, envMap map[string]string, volumes []*VolumeInfo, sourceDir string, paramMap map[string]string,
 	appEntry *types.AppEntry, versionHash string, kubernetesOptions KubernetesOptions, isImageSpec bool) (string, error) {
-	labels := map[string]string{"app": name}
-
-	metadata := map[string]string{}
-	metadata["app"] = name
-	metadata[LABEL_PREFIX+"app.id"] = TrimLabelValue(string(appEntry.Id))
-	metadata[LABEL_PREFIX+"git.sha"] = TrimLabelValue(appEntry.Metadata.VersionMetadata.GitCommit)
-	metadata[LABEL_PREFIX+"app.version"] = strconv.Itoa(appEntry.Metadata.VersionMetadata.Version)
-	metadata[VERSION_HASH_LABEL] = TrimLabelValue(versionHash)
-	annotations := map[string]string{
-		LABEL_PREFIX + "app.id":   string(appEntry.Id),
-		LABEL_PREFIX + "app.path": appEntry.Path,
-	}
-
-	// For image-spec apps, the version hash does not change when only the
-	// upstream tag's content moves (Kubernetes's RefreshImage is a no-op so
-	// the image digest is not folded into versionHash). Without something
-	// changing in the pod template, a re-apply during `openrun app reload`
-	// would be a no-op and Kubernetes would not roll out new pods. We bump
-	// a dedicated pod-template-only annotation on every reload so the apply
-	// diff exists and the RollingUpdate strategy picks up the new image. We
-	// keep this annotation off the Deployment- and Service-level metadata
-	// so unrelated controllers don't see spurious churn.
-	templateAnnotations := annotations
-	if isImageSpec {
-		templateAnnotations = make(map[string]string, len(annotations)+1)
-		for k, v := range annotations {
-			templateAnnotations[k] = v
-		}
-		templateAnnotations[LABEL_PREFIX+"refreshed-at"] = strconv.FormatInt(time.Now().Unix(), 10)
-	}
-
-	// Set replicas from kubernetesOptions, defaulting to 1
-	replicas := int32(1)
-	if kubernetesOptions.MinReplicas > 0 {
-		replicas = kubernetesOptions.MinReplicas
-	}
-	if kubernetesOptions.MaxReplicas > 0 && kubernetesOptions.MaxReplicas < replicas {
-		replicas = kubernetesOptions.MaxReplicas
-	}
-
-	// Convert envMap to Kubernetes EnvVar apply configurations
-	envVars := make([]*corev1apply.EnvVarApplyConfiguration, 0, len(envMap))
-	for key, value := range envMap {
-		envVars = append(envVars, corev1apply.EnvVar().
-			WithName(key).
-			WithValue(value))
-	}
-
-	// Process volumes (creates Secrets/ConfigMaps as needed)
-	podVolumes, volumeMounts, err := k.processVolumes(ctx, name, volumes, sourceDir, paramMap)
-	if err != nil {
-		return "", err
-	}
-
-	protocol := core.ProtocolTCP
-	containerConfig := corev1apply.Container().
-		WithName(name).
-		WithImage(image).
-		WithPorts(corev1apply.ContainerPort().
-			WithContainerPort(port).
-			WithProtocol(protocol)).
-		WithEnv(envVars...)
-
-	if isImageSpec {
-		// Image-spec apps consume an externally-managed tag; ensure each new
-		// pod actually re-resolves the tag against the registry instead of
-		// reusing whatever bytes happen to be cached on the node. Combined
-		// with the refreshed-at annotation bump above, every reload pulls
-		// the latest content for the configured tag.
-		containerConfig = containerConfig.WithImagePullPolicy(core.PullAlways)
-	}
-
-	if len(volumeMounts) > 0 {
-		containerConfig = containerConfig.WithVolumeMounts(volumeMounts...)
-	}
-
-	// Add resource requirements if cpus or memory are specified
-	if kubernetesOptions.Cpus != "" || kubernetesOptions.Memory != "" {
-		resources := corev1apply.ResourceRequirements()
-		requestsList := core.ResourceList{}
-		limitsList := core.ResourceList{}
-
-		if kubernetesOptions.Cpus != "" {
-			cpus, err := CPUString(kubernetesOptions.Cpus, false)
-			if err != nil {
-				return "", fmt.Errorf("error parsing cpus value %q: %w", kubernetesOptions.Cpus, err)
-			}
-			cpuQuantity, err := resource.ParseQuantity(cpus + "m") // convert to millicores
-			if err != nil {
-				return "", fmt.Errorf("invalid cpus value %q: %w", kubernetesOptions.Cpus, err)
-			}
-			requestsList[core.ResourceCPU] = cpuQuantity
-		}
-
-		if kubernetesOptions.Memory != "" {
-			memory, err := BytesString(kubernetesOptions.Memory)
-			if err != nil {
-				return "", fmt.Errorf("error parsing memory value %q: %w", kubernetesOptions.Memory, err)
-			}
-			memQuantity, err := resource.ParseQuantity(memory)
-			if err != nil {
-				return "", fmt.Errorf("invalid memory value %q: %w", kubernetesOptions.Memory, err)
-			}
-			requestsList[core.ResourceMemory] = memQuantity
-			limitsList[core.ResourceMemory] = memQuantity
-		}
-
-		resources = resources.WithRequests(requestsList).WithLimits(limitsList)
-		containerConfig = containerConfig.WithResources(resources)
-	}
-
-	podSpec := corev1apply.PodSpec().
-		WithContainers(containerConfig)
-	if len(podVolumes) > 0 {
-		podSpec = podSpec.WithVolumes(podVolumes...)
-	}
-
-	// Set deployment strategy
-	strategy := appsv1apply.DeploymentStrategy().
-		//WithType(appsv1.RecreateDeploymentStrategyType)
-		WithType(appsv1.RollingUpdateDeploymentStrategyType)
-
-	dep := appsv1apply.Deployment(name, k.appNamespace).
-		WithLabels(labels).
-		WithAnnotations(annotations).
-		WithSpec(appsv1apply.DeploymentSpec().
-			WithReplicas(replicas).
-			WithSelector(metav1apply.LabelSelector().
-				WithMatchLabels(labels)).
-			WithStrategy(strategy).
-			WithTemplate(corev1apply.PodTemplateSpec().
-				WithLabels(metadata).
-				WithAnnotations(templateAnnotations).
-				WithSpec(podSpec)))
-
-	if _, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Apply(ctx, dep, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
-		return "", fmt.Errorf("apply deployment: %w", err)
-	}
-
-	// Create HPA if MaxReplicas > 1
-	if kubernetesOptions.MaxReplicas > 1 {
-		minReplicas := kubernetesOptions.MinReplicas
-		if minReplicas < 1 {
-			minReplicas = 1
-		}
-		hpa := autoscalingv2apply.HorizontalPodAutoscaler(name, k.appNamespace).
-			WithLabels(labels).
-			WithSpec(autoscalingv2apply.HorizontalPodAutoscalerSpec().
-				WithScaleTargetRef(autoscalingv2apply.CrossVersionObjectReference().
-					WithAPIVersion("apps/v1").
-					WithKind("Deployment").
-					WithName(name)).
-				WithMinReplicas(minReplicas).
-				WithMaxReplicas(kubernetesOptions.MaxReplicas).
-				WithMetrics(autoscalingv2apply.MetricSpec().
-					WithType(autoscalingv2.ResourceMetricSourceType).
-					WithResource(autoscalingv2apply.ResourceMetricSource().
-						WithName(core.ResourceCPU).
-						WithTarget(autoscalingv2apply.MetricTarget().
-							WithType(autoscalingv2.UtilizationMetricType).
-							WithAverageUtilization(k.appConfig.Kubernetes.ScalingThresholdCPU)))))
-
-		if _, err := k.clientSet.AutoscalingV2().HorizontalPodAutoscalers(k.appNamespace).Apply(
-			ctx, hpa, meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER}); err != nil {
-			return "", fmt.Errorf("apply hpa: %w", err)
-		}
-		k.Logger.Info().Msgf("created HPA for %s with min=%d max=%d", name, minReplicas, kubernetesOptions.MaxReplicas)
-	}
-
-	serviceType := core.ServiceTypeClusterIP
-	if k.config.Kubernetes.UseNodePort {
-		serviceType = core.ServiceTypeNodePort
-	}
-	svcApply := corev1apply.Service(name, k.appNamespace).
-		WithLabels(metadata).
-		WithAnnotations(annotations).
-		WithSpec(corev1apply.ServiceSpec().
-			WithType(serviceType).
-			WithSelector(labels).
-			WithPorts(corev1apply.ServicePort().
-				WithName("http").
-				WithPort(port).
-				WithTargetPort(intstr.FromInt(int(port))).
-				WithProtocol(protocol)))
-
-	svc, err := k.clientSet.CoreV1().Services(
-		k.appNamespace).Apply(ctx, svcApply,
-		meta.ApplyOptions{FieldManager: OPENRUN_FIELD_MANAGER})
-	if err != nil {
-		return "", fmt.Errorf("apply service: %w", err)
-	}
-
-	if len(svc.Spec.Ports) == 0 {
-		return "", fmt.Errorf("service has no ports")
-	}
-
-	// In-cluster DNS URL
-	servicePort := svc.Spec.Ports[0].Port
-	url := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, servicePort)
-	if k.config.Kubernetes.UseNodePort {
-		url = fmt.Sprintf("127.0.0.1:%d", svc.Spec.Ports[0].NodePort)
-	}
-
-	return url, nil
+	_ = "STUB: not implemented"
+	return "", nil
 }
+
+// For image-spec apps, the version hash does not change when only the
+// upstream tag's content moves (Kubernetes's RefreshImage is a no-op so
+// the image digest is not folded into versionHash). Without something
+// changing in the pod template, a re-apply during `openrun app reload`
+// would be a no-op and Kubernetes would not roll out new pods. We bump
+// a dedicated pod-template-only annotation on every reload so the apply
+// diff exists and the RollingUpdate strategy picks up the new image. We
+// keep this annotation off the Deployment- and Service-level metadata
+// so unrelated controllers don't see spurious churn.
+
+// Set replicas from kubernetesOptions, defaulting to 1
+
+// Convert envMap to Kubernetes EnvVar apply configurations
+
+// Process volumes (creates Secrets/ConfigMaps as needed)
+
+// Image-spec apps consume an externally-managed tag; ensure each new
+// pod actually re-resolves the tag against the registry instead of
+// reusing whatever bytes happen to be cached on the node. Combined
+// with the refreshed-at annotation bump above, every reload pulls
+// the latest content for the configured tag.
+
+// Add resource requirements if cpus or memory are specified
+
+// convert to millicores
+
+// Set deployment strategy
+
+//WithType(appsv1.RecreateDeploymentStrategyType)
+
+// Create HPA if MaxReplicas > 1
+
+// In-cluster DNS URL

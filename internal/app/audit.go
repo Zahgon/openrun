@@ -4,309 +4,56 @@
 package app
 
 import (
-	"fmt"
-	"reflect"
-	"slices"
-	"strings"
-
-	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
 )
 
-func (a *App) Audit() (*types.ApproveResult, error) {
-	buf, err := a.sourceFS.ReadFile(a.getStarPath(apptype.APP_FILE_NAME))
-	if err != nil {
-		return nil, fmt.Errorf("error reading %s file: %w", a.getStarPath(apptype.APP_FILE_NAME), err)
-	}
+func (a *App) Audit() (*types.ApproveResult, error) { _ = "STUB: not implemented"; return nil, nil }
 
-	starlarkCache := map[string]*starlarkCacheEntry{}
-	auditLoader := func(thread *starlark.Thread, moduleFullPath string) (starlark.StringDict, error) {
+// Load the starlark file rather than the plugin
 
-		if strings.HasSuffix(moduleFullPath, apptype.STARLARK_FILE_SUFFIX) {
-			// Load the starlark file rather than the plugin
-			return a.loadStarlark(thread, moduleFullPath, starlarkCache)
-		}
+// The loader in audit mode is used to track the modules that are loaded.
+// A copy of the real loader's response is returned, with builtins replaced with dummy methods,
+// so that the audit can be run without any side effects
 
-		// The loader in audit mode is used to track the modules that are loaded.
-		// A copy of the real loader's response is returned, with builtins replaced with dummy methods,
-		// so that the audit can be run without any side effects
+// Replace all the builtins with dummy methods
 
-		modulePath, moduleName, _ := parseModulePath(moduleFullPath)
+// TODO use logger
 
-		pluginMap, err := a.pluginLookup(thread, modulePath)
-		if err != nil {
-			return nil, err
-		}
+// This runs the starlark script, with dummy plugin methods
+// The intent is to load the permissions from the app definition while trying
+// to avoid any potential side effects from script
 
-		// Replace all the builtins with dummy methods
-		dummyDict := make(starlark.StringDict)
-		for name, pluginInfo := range pluginMap {
-			if pluginInfo.HandlerName == "" {
-				dummyDict[name] = pluginInfo.ConstantValue
-			} else {
-				dummyDict[name] = starlark.NewBuiltin(name, func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-					a.Info().Msgf("Plugin called during audit: %s.%s", modulePath, name)
-					return starlarkstruct.FromStringDict(starlarkstruct.Default, make(starlark.StringDict)), nil
-				})
-			}
-		}
+func needsApproval(a *types.ApproveResult) bool { _ = "STUB: not implemented"; return false }
 
-		ret := make(starlark.StringDict)
-		ret[moduleName] = starlarkstruct.FromStringDict(starlarkstruct.Default, dummyDict)
-
-		return ret, nil
-	}
-
-	thread := &starlark.Thread{
-		Name:  a.Path,
-		Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) }, // TODO use logger
-		Load:  auditLoader,
-	}
-	thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
-
-	err = a.loadSchemaInfo(a.sourceFS)
-	if err != nil {
-		return nil, err
-	}
-
-	err = a.loadParamsInfo(a.sourceFS)
-	if err != nil {
-		return nil, err
-	}
-
-	builtin, err := a.createBuiltin()
-	if err != nil {
-		return nil, err
-	}
-
-	_, prog, err := starlark.SourceProgramOptions(AppFileOptions(), a.getStarPath(apptype.APP_FILE_NAME), buf, builtin.Has)
-	if err != nil {
-		return nil, fmt.Errorf("parsing source failed %v", err)
-	}
-
-	loads := []string{}
-	for i := 0; i < prog.NumLoads(); i++ {
-		p, _ := prog.Load(i)
-		if !slices.Contains(loads, p) {
-			loads = append(loads, p)
-		}
-	}
-
-	// This runs the starlark script, with dummy plugin methods
-	// The intent is to load the permissions from the app definition while trying
-	// to avoid any potential side effects from script
-	globals, err := prog.Init(thread, builtin)
-	if err != nil {
-		return nil, fmt.Errorf("source init failed: %v", err)
-	}
-
-	appDef, err := verifyConfig(globals)
-	if err != nil {
-		return nil, err
-	}
-
-	name, err := apptype.GetStringAttr(appDef, "name")
-	if err != nil {
-		return nil, err
-	}
-
-	a.Metadata.Name = name
-	return a.createApproveResponse(loads, globals)
-}
-
-func needsApproval(a *types.ApproveResult) bool {
-	if !slices.Equal(a.NewLoads, a.ApprovedLoads) {
-		return true
-	}
-
-	permEquals := func(a, b types.Permission) bool {
-		if a.Plugin != b.Plugin || a.Method != b.Method {
-			return false
-		}
-
-		if a.IsRead == nil && b.IsRead != nil || a.IsRead != nil && b.IsRead == nil {
-			return false
-		}
-
-		if a.IsRead != nil && b.IsRead != nil && *a.IsRead != *b.IsRead {
-			return false
-		}
-
-		if !slices.Equal(a.Arguments, b.Arguments) {
-			return false
-		}
-
-		if !reflect.DeepEqual(a.Secrets, b.Secrets) {
-			return false
-		}
-
-		return true
-	}
-
-	//TODO: sort slices before checking equality
-	return !slices.EqualFunc(a.NewPermissions, a.ApprovedPermissions, permEquals)
-}
+//TODO: sort slices before checking equality
 
 // needsApprovalWithServerConfig re-evaluates whether approval is needed after accounting
 // for loads and permissions that are already covered by the server config.
 func needsApprovalWithServerConfig(a *types.ApproveResult, serverPerms []types.Permission) bool {
-	serverPlugins := make(map[string]bool)
-	for _, sp := range serverPerms {
-		serverPlugins[sp.Plugin] = true
-	}
-
-	// Filter new loads: remove any that are covered by server config or already approved
-	approvedSet := make(map[string]bool)
-	for _, l := range a.ApprovedLoads {
-		approvedSet[l] = true
-	}
-	for _, l := range a.NewLoads {
-		if !approvedSet[l] && !serverPlugins[l] {
-			return true
-		}
-	}
-
-	// Filter new permissions: remove any that are covered by server config or already approved
-	for _, p := range a.NewPermissions {
-		if permissionCoveredByServerConfig(p, serverPerms) {
-			continue
-		}
-		// Check if it's in the approved list
-		found := false
-		for _, ap := range a.ApprovedPermissions {
-			if ap.Plugin == p.Plugin && ap.Method == p.Method &&
-				slices.Equal(ap.Arguments, p.Arguments) &&
-				reflect.DeepEqual(ap.Secrets, p.Secrets) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return true
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return false
 }
+
+// Filter new loads: remove any that are covered by server config or already approved
+
+// Filter new permissions: remove any that are covered by server config or already approved
+
+// Check if it's in the approved list
 
 // permissionCoveredByServerConfig checks if a permission declared by an app is already
 // covered by a server config permission entry. Server config permissions can use regex
 // for arguments, so this does regex-aware matching.
 func permissionCoveredByServerConfig(perm types.Permission, serverPerms []types.Permission) bool {
-	for _, sp := range serverPerms {
-		if sp.Plugin != perm.Plugin || sp.Method != perm.Method {
-			continue
-		}
-
-		if len(sp.Arguments) == 0 {
-			return true
-		}
-
-		if len(sp.Arguments) > len(perm.Arguments) {
-			continue
-		}
-
-		argMatch := true
-		for i, serverArg := range sp.Arguments {
-			appArg := perm.Arguments[i]
-			if serverArg == appArg {
-				continue
-			}
-			match, err := types.RegexMatch(serverArg, appArg)
-			if err != nil || !match {
-				argMatch = false
-				break
-			}
-		}
-
-		if argMatch {
-			return true
-		}
-	}
+	_ = "STUB: not implemented"
 	return false
 }
 
 func (a *App) createApproveResponse(loads []string, globals starlark.StringDict) (*types.ApproveResult, error) {
+	_ = "STUB: not implemented"
 	// the App entry should not get updated during the audit call, since there
 	// can be audit calls when the app is running.
-	appDef, err := verifyConfig(globals)
-	if err != nil {
-		return nil, err
-	}
-
-	perms := []types.Permission{}
-	results := types.ApproveResult{
-		AppPathDomain:       a.AppPathDomain(),
-		Id:                  a.Id,
-		NewLoads:            loads,
-		NewPermissions:      perms,
-		ApprovedLoads:       a.Metadata.Loads,
-		ApprovedPermissions: a.Metadata.Permissions,
-	}
-	permissions, err := appDef.Attr("permissions")
-	if err != nil {
-		// permission order needs to match for now
-		results.NeedsApproval = needsApproval(&results)
-		if results.NeedsApproval && len(a.serverConfig.Permissions.Allow) > 0 {
-			results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow)
-		}
-		return &results, nil
-	}
-
-	var ok bool
-	var permList *starlark.List
-	if permList, ok = permissions.(*starlark.List); !ok {
-		return nil, fmt.Errorf("permissions is not a list")
-	}
-	iter := permList.Iterate()
-	var val starlark.Value
-	count := -1
-	for iter.Next(&val) {
-		count++
-		var permStruct *starlarkstruct.Struct
-		if permStruct, ok = val.(*starlarkstruct.Struct); !ok {
-			return nil, fmt.Errorf("permissions entry %d is not a struct", count)
-		}
-		var pluginStr, methodStr string
-		var args []string
-		var secrets [][]string
-		if pluginStr, err = apptype.GetStringAttr(permStruct, "plugin"); err != nil {
-			return nil, err
-		}
-		if methodStr, err = apptype.GetStringAttr(permStruct, "method"); err != nil {
-			return nil, err
-		}
-		if args, err = apptype.GetListStringAttr(permStruct, "arguments", true); err != nil {
-			return nil, err
-		}
-		if secrets, err = apptype.GetListListStringAttr(permStruct, "secrets", true); err != nil {
-			return nil, err
-		}
-
-		perm := types.Permission{
-			Plugin:    pluginStr,
-			Method:    methodStr,
-			Arguments: args,
-			Secrets:   secrets,
-		}
-
-		if slices.Contains(permStruct.AttrNames(), "is_read") {
-			isRead, err := apptype.GetBoolAttr(permStruct, "is_read")
-			if err != nil {
-				return nil, err
-			}
-			perm.IsRead = &isRead
-		}
-
-		perms = append(perms, perm)
-
-	}
-	results.NewPermissions = perms
-	results.NeedsApproval = needsApproval(&results)
-	if results.NeedsApproval && len(a.serverConfig.Permissions.Allow) > 0 {
-		results.NeedsApproval = needsApprovalWithServerConfig(&results, a.serverConfig.Permissions.Allow)
-	}
-	return &results, nil
+	return nil, nil
 }
+
+// permission order needs to match for now

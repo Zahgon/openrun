@@ -4,9 +4,6 @@
 package types
 
 import (
-	"fmt"
-	"slices"
-	"strings"
 	"time"
 )
 
@@ -46,22 +43,8 @@ const (
 )
 
 func ParseGrant(grant string, supportedGrantTypes []GrantType) (BindingGrant, error) {
-	grantType, grantTarget, ok := strings.Cut(grant, ":")
-	if !ok || grantType == "" {
-		return BindingGrant{}, fmt.Errorf("invalid grant format, expected type:<target>, got: %s", grant)
-	}
-	grantType = strings.ToUpper(strings.TrimSpace(grantType))
-	if !slices.Contains(supportedGrantTypes, GrantType(grantType)) {
-		supportedGrantTypesStr := make([]string, len(supportedGrantTypes))
-		for i, gt := range supportedGrantTypes {
-			supportedGrantTypesStr[i] = string(gt)
-		}
-		return BindingGrant{}, fmt.Errorf("unsupported grant type: %s, supported types: %s", grantType, strings.Join(supportedGrantTypesStr, ", "))
-	}
-	return BindingGrant{
-		GrantType:   GrantType(grantType),
-		GrantTarget: strings.TrimSpace(grantTarget),
-	}, nil
+	_ = "STUB: not implemented"
+	return *new(BindingGrant), nil
 }
 
 type BindingGrant struct {
@@ -69,6 +52,4 @@ type BindingGrant struct {
 	GrantTarget string    `json:"grant_target"`
 }
 
-func (g BindingGrant) String() string {
-	return fmt.Sprintf("%s:%s", g.GrantType, g.GrantTarget)
-}
+func (g BindingGrant) String() string { _ = "STUB: not implemented"; return "" }

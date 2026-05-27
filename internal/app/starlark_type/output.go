@@ -4,9 +4,6 @@
 package starlark_type
 
 import (
-	"fmt"
-	"strings"
-
 	"go.starlark.net/starlark"
 )
 
@@ -16,40 +13,20 @@ type Output struct {
 }
 
 func (o Output) Attr(name string) (starlark.Value, error) {
-	switch name {
-	case "value":
-		if o.Err != "" {
-			return starlark.None, fmt.Errorf("output has error: %s", o.Err)
-		}
-		return o.Value, nil
-	case "error":
-		return starlark.String(o.Err), nil
-	default:
-		return starlark.None, fmt.Errorf("output has no attribute '%s'", name)
-	}
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
-func (o Output) AttrNames() []string {
-	return []string{"value", "error"}
-}
+func (o Output) AttrNames() []string { _ = "STUB: not implemented"; return nil }
 
-func (o Output) String() string {
-	return strings.ToLower(fmt.Sprintf("%v:%s", o.Value, o.Err))
-}
+func (o Output) String() string { _ = "STUB: not implemented"; return "" }
 
-func (o Output) Type() string {
-	return "Output"
-}
+func (o Output) Type() string { _ = "STUB: not implemented"; return "" }
 
-func (o Output) Freeze() {
-}
+func (o Output) Freeze() { _ = "STUB: not implemented"; return }
 
-func (o Output) Truth() starlark.Bool {
-	return o.Err == ""
-}
+func (o Output) Truth() starlark.Bool { _ = "STUB: not implemented"; return *new(starlark.Bool) }
 
-func (o Output) Hash() (uint32, error) {
-	return starlark.Tuple{o.Value, starlark.String(o.Err)}.Hash()
-}
+func (o Output) Hash() (uint32, error) { _ = "STUB: not implemented"; return 0, nil }
 
 var _ starlark.Value = (*Output)(nil)

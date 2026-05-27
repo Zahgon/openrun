@@ -4,7 +4,6 @@ package system
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
 	"sync"
@@ -32,43 +31,20 @@ type Transport struct {
 	loc map[string]string
 }
 
-func (t *Transport) initTransport() {
-	t.transport.DialContext = t.dialContext
-	t.transport.DialTLS = t.dialTLS //nolint:staticcheck
-	t.transport.DisableCompression = true
-	t.transport.ResponseHeaderTimeout = t.ResponseHeaderTimeout
-}
+func (t *Transport) initTransport() { _ = "STUB: not implemented"; return }
 
-func (t *Transport) getTransport() *http.Transport {
-	t.onceInit.Do(t.initTransport)
-	return &t.transport
-}
+//nolint:staticcheck
+
+func (t *Transport) getTransport() *http.Transport { _ = "STUB: not implemented"; return nil }
 
 func (t *Transport) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if network != "tcp" {
-		return nil, errors.New("httpunix internals are confused: network=" + network)
-	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	if port != "80" {
-		return nil, errors.New("httpunix internals are confused: port=" + port)
-	}
-	t.mu.Lock()
-	path, ok := t.loc[host]
-	t.mu.Unlock()
-	if !ok {
-		return nil, errors.New("unknown location: " + host)
-	}
-	d := net.Dialer{
-		Timeout: t.DialTimeout,
-	}
-	return d.DialContext(ctx, "unix", path)
+	_ = "STUB: not implemented"
+	return *new(net.Conn), nil
 }
 
 func (t *Transport) dialTLS(network, addr string) (net.Conn, error) {
-	return nil, errors.New("httpunix: TLS over UNIX domain sockets is not supported")
+	_ = "STUB: not implemented"
+	return *new(net.Conn), nil
 }
 
 // RegisterLocation registers an URL location and maps it to the given
@@ -76,36 +52,15 @@ func (t *Transport) dialTLS(network, addr string) (net.Conn, error) {
 //
 // Calling RegisterLocation twice for the same location is a
 // programmer error, and causes a panic.
-func (t *Transport) RegisterLocation(loc string, path string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.loc == nil {
-		t.loc = make(map[string]string)
-	}
-	if _, exists := t.loc[loc]; exists {
-		panic("location " + loc + " already registered")
-	}
-	t.loc[loc] = path
-}
+func (t *Transport) RegisterLocation(loc string, path string) { _ = "STUB: not implemented"; return }
 
 var _ http.RoundTripper = (*Transport)(nil)
 
 // RoundTrip executes a single HTTP transaction. See
 // net/http.RoundTripper.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL == nil {
-		return nil, errors.New("http+unix: nil Request.URL")
-	}
-	if req.URL.Scheme != Scheme {
-		return nil, errors.New("unsupported protocol scheme: " + req.URL.Scheme)
-	}
-	if req.URL.Host == "" {
-		return nil, errors.New("http+unix: no Host in request URL")
-	}
-
-	tt := t.getTransport()
-	req = req.Clone(req.Context())
-	// get http.Transport to cooperate
-	req.URL.Scheme = "http"
-	return tt.RoundTrip(req)
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+// get http.Transport to cooperate

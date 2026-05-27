@@ -23,9 +23,11 @@ type ExecPlugin struct {
 }
 
 func NewExecPlugin(_ *types.PluginContext) (any, error) {
-	return &ExecPlugin{}, nil
+	_ = "STUB: not implemented"
+	return *new(any), nil
 }
 
 func (e *ExecPlugin) Run(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	return execCommand(nil, thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }

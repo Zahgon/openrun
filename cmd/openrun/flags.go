@@ -4,12 +4,6 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/urfave/cli/v2"
 )
 
@@ -30,70 +24,28 @@ const (
 )
 
 func newStringFlag(name, alias, usage, value string) *cli.StringFlag {
-	var aliases []string
-	if alias != "" {
-		aliases = []string{alias}
-	}
-	return &cli.StringFlag{
-		Name:    name,
-		Aliases: aliases,
-		Usage:   usage,
-		Value:   value,
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func newIntFlag(name, alias, usage string, value int) *cli.IntFlag {
-	var aliases []string
-	if alias != "" {
-		aliases = []string{alias}
-	}
-	return &cli.IntFlag{
-		Name:    name,
-		Aliases: aliases,
-		Usage:   usage,
-		Value:   value,
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func newBoolFlag(name, alias, usage string, value bool) *cli.BoolFlag {
-	var aliases []string
-	if alias != "" {
-		aliases = []string{alias}
-	}
-	return &cli.BoolFlag{
-		Name:    name,
-		Aliases: aliases,
-		Usage:   usage,
-		Value:   value,
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func validateNoFlagLikeValues(flagName string, valueName string, values []string) error {
-	for _, value := range values {
-		if strings.HasPrefix(value, "--") {
-			return fmt.Errorf("invalid %s value %q for %s: values cannot start with --; did you forget to provide a value for %s?", valueName, value, flagName, flagName)
-		}
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 // makeAbsolute converts a relative path to an absolute path.
 // This needs to be called in the client before the call to system.NewHttpClient
 // since that changes the cwd to $OPENRUN_HOME
-func makeAbsolute(sourceUrl string) (string, error) {
-	if sourceUrl == "-" || system.IsGit(sourceUrl) {
-		return sourceUrl, nil
-	}
+func makeAbsolute(sourceUrl string) (string, error) { _ = "STUB: not implemented"; return "", nil }
 
-	var err error
-	// Convert to absolute path so that server can find it
-	sourceUrl, err = filepath.Abs(sourceUrl)
-	if err != nil {
-		return "", fmt.Errorf("error getting absolute path for %s: %w", sourceUrl, err)
-	}
-	_, err = os.Stat(sourceUrl)
-	if err != nil {
-		return "", fmt.Errorf("path does not exist %s: %w", sourceUrl, err)
-	}
-	return sourceUrl, nil
-}
+// Convert to absolute path so that server can find it

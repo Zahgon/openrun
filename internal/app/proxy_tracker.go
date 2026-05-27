@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrundev/openrun/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -28,50 +27,18 @@ type ByteWindow struct {
 }
 
 func NewByteWindow(windowSeconds int, attrs ...attribute.KeyValue) *ByteWindow {
-	if windowSeconds < 1 {
-		windowSeconds = 1
-	}
-	return &ByteWindow{
-		buckets: make([]bucket, windowSeconds),
-		window:  windowSeconds,
-		attrs:   append([]attribute.KeyValue(nil), attrs...),
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (bw *ByteWindow) add(ctx context.Context, now time.Time, sent, recv uint64) {
-	sec := now.Unix()
-	idx := int(sec % int64(bw.window))
-
-	bw.mu.Lock()
-	b := &bw.buckets[idx]
-	if b.sec != sec {
-		// this slot is stale; reset
-		b.sec = sec
-		b.sent = 0
-		b.recv = 0
-	}
-	b.sent += sent
-	b.recv += recv
-	bw.mu.Unlock()
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	telemetry.RecordAppProxyBytes(ctx, recv, sent, bw.attrs...)
-}
-
-func (bw *ByteWindow) Totals() (sent, recv uint64) {
-	now := time.Now().Unix()
-	bw.mu.Lock()
-	defer bw.mu.Unlock()
-	for i := range bw.buckets {
-		if now-bw.buckets[i].sec < int64(bw.window) {
-			sent += bw.buckets[i].sent
-			recv += bw.buckets[i].recv
-		}
-	}
+	_ = "STUB: not implemented"
 	return
 }
+
+// this slot is stale; reset
+
+func (bw *ByteWindow) Totals() (sent, recv uint64) { _ = "STUB: not implemented"; return 0, 0 }
 
 type countingReadCloser struct {
 	rc  io.ReadCloser
@@ -79,14 +46,9 @@ type countingReadCloser struct {
 	ctx context.Context
 }
 
-func (c *countingReadCloser) Read(p []byte) (int, error) {
-	n, err := c.rc.Read(p)
-	if n > 0 {
-		c.bw.add(c.ctx, time.Now(), 0, uint64(n))
-	}
-	return n, err
-}
-func (c *countingReadCloser) Close() error { return c.rc.Close() }
+func (c *countingReadCloser) Read(p []byte) (int, error) { _ = "STUB: not implemented"; return 0, nil }
+
+func (c *countingReadCloser) Close() error { _ = "STUB: not implemented"; return nil }
 
 type countingResponseWriter struct {
 	http.ResponseWriter
@@ -95,36 +57,25 @@ type countingResponseWriter struct {
 }
 
 func (w *countingResponseWriter) Write(p []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(p)
-	if n > 0 {
-		w.bw.add(w.ctx, time.Now(), uint64(n), 0)
-	}
-	return n, err
+	_ = "STUB: not implemented"
+	return 0, nil
 }
 
 func (w *countingResponseWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
+	_ = "STUB: not implemented"
+	return *
+
+	// Support Flush for streaming/SSE.
+	new(http.ResponseWriter)
 }
 
-// Support Flush for streaming/SSE.
-func (w *countingResponseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
+func (w *countingResponseWriter) Flush() { _ = "STUB: not implemented"; return }
 
 // Implement Hijacker so reverse proxy can upgrade to WS,
 // and we can wrap the net.Conn to count both directions.
 func (w *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hj, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, http.ErrHijacked
-	}
-	c, rw, err := hj.Hijack()
-	if err != nil {
-		return nil, nil, err
-	}
-	return &countingConn{Conn: c, bw: w.bw, ctx: w.ctx}, rw, nil
+	_ = "STUB: not implemented"
+	return *new(net.Conn), nil, nil
 }
 
 type countingConn struct {
@@ -133,20 +84,13 @@ type countingConn struct {
 	ctx context.Context
 }
 
-func (c *countingConn) Read(b []byte) (int, error) {
-	n, err := c.Conn.Read(b)
-	if n > 0 {
-		c.bw.add(c.ctx, time.Now(), 0, uint64(n)) // client -> proxy
-	}
-	return n, err
-}
-func (c *countingConn) Write(b []byte) (int, error) {
-	n, err := c.Conn.Write(b)
-	if n > 0 {
-		c.bw.add(c.ctx, time.Now(), uint64(n), 0) // proxy -> client
-	}
-	return n, err
-}
+func (c *countingConn) Read(b []byte) (int, error) { _ = "STUB: not implemented"; return 0, nil }
+
+// client -> proxy
+
+func (c *countingConn) Write(b []byte) (int, error) { _ = "STUB: not implemented"; return 0, nil }
+
+// proxy -> client
 
 // Tracker is a reverse proxy with byte count tracking
 type Tracker struct {
@@ -155,22 +99,15 @@ type Tracker struct {
 }
 
 func NewTracker(proxy *httputil.ReverseProxy, windowSeconds int, attrs ...attribute.KeyValue) *Tracker {
-	return &Tracker{
-		bw:    NewByteWindow(windowSeconds, attrs...),
-		proxy: proxy,
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	_ = "STUB: not implemented"
 	// Count request bytes (body) for non-upgraded requests.
-	if r.Body != nil {
-		r.Body = &countingReadCloser{rc: r.Body, bw: t.bw, ctx: r.Context()}
-	}
-	crw := &countingResponseWriter{ResponseWriter: w, bw: t.bw, ctx: r.Context()}
-	t.proxy.ServeHTTP(crw, r)
+	return
 }
 
 // Accessor to read the rolling totals.
-func (t *Tracker) GetRollingTotals() (sent, recv uint64) {
-	return t.bw.Totals()
-}
+func (t *Tracker) GetRollingTotals() (sent, recv uint64) { _ = "STUB: not implemented"; return 0, 0 }

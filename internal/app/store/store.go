@@ -6,10 +6,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 
-	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"go.starlark.net/starlark"
 )
@@ -50,67 +48,7 @@ type Entry struct {
 
 var _ starlark.Unpacker = (*Entry)(nil)
 
-func (e *Entry) Unpack(value starlark.Value) error {
-	v, ok := value.(starlark.HasAttrs)
-	if !ok {
-		return fmt.Errorf("expected entry, got %s", value.Type())
-	}
-	var err error
-
-	entryData := make(map[string]any)
-	for _, attr := range v.AttrNames() {
-		switch attr {
-		case ID_FIELD:
-			id, err := apptype.GetIntAttr(v, attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-			e.Id = EntryId(id)
-		case VERSION_FIELD:
-			e.Version, err = apptype.GetIntAttr(v, attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-		case CREATED_BY_FIELD:
-			createdBy, err := apptype.GetStringAttr(v, attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-			e.CreatedBy = UserId(createdBy)
-		case UPDATED_BY_FIELD:
-			updatedBy, err := apptype.GetStringAttr(v, attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-			e.UpdatedBy = UserId(updatedBy)
-		case CREATED_AT_FIELD:
-			createdAt, err := apptype.GetIntAttr(v, attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-			e.CreatedAt = time.UnixMilli(createdAt)
-		case UPDATED_AT_FIELD:
-			updatedAt, err := apptype.GetIntAttr(v, attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-			e.UpdatedAt = time.UnixMilli(updatedAt)
-		default:
-			dataVal, err := v.Attr(attr)
-			if err != nil {
-				return fmt.Errorf("error reading %s: %w", attr, err)
-			}
-			data, err := starlark_type.UnmarshalStarlark(dataVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshalling %s : %w", attr, err)
-			}
-			entryData[attr] = data
-		}
-	}
-
-	e.Data = entryData
-	return nil
-}
+func (e *Entry) Unpack(value starlark.Value) error { _ = "STUB: not implemented"; return nil }
 
 // Store is the interface for a OpenRun document store. These API are exposed by the db plugin
 type Store interface {
@@ -149,23 +87,8 @@ type Store interface {
 }
 
 func CreateType(name string, entry *Entry) (*starlark_type.StarlarkType, error) {
-	data := make(map[string]starlark.Value)
-
-	data[ID_FIELD] = starlark.MakeInt(int(entry.Id))
-	data[VERSION_FIELD] = starlark.MakeInt(int(entry.Version))
-	data[CREATED_BY_FIELD] = starlark.String(string(entry.CreatedBy))
-	data[UPDATED_BY_FIELD] = starlark.String(string(entry.UpdatedBy))
-	data[CREATED_AT_FIELD] = starlark.MakeInt(int(entry.CreatedAt.UnixMilli()))
-	data[UPDATED_AT_FIELD] = starlark.MakeInt(int(entry.UpdatedAt.UnixMilli()))
-
-	var err error
-	for k, v := range entry.Data {
-		data[k], err = starlark_type.MarshalStarlark(v)
-		if err != nil {
-			return nil, err
-		}
-		// TODO - add missing fields
-	}
-
-	return starlark_type.NewStarlarkType(name, data), nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+// TODO - add missing fields

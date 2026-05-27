@@ -4,15 +4,9 @@
 package types
 
 import (
-	"cmp"
 	"context"
 	"crypto/x509"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/openrundev/openrun/internal/app/starlark_type"
@@ -24,13 +18,9 @@ var (
 	gitVersion string // gitVersion is the build tag
 )
 
-func GetVersion() string {
-	return cmp.Or(gitVersion, "dev")
-}
+func GetVersion() string { _ = "STUB: not implemented"; return "" }
 
-func GetCommit() string {
-	return cmp.Or(gitCommit, "dev_build")
-}
+func GetCommit() string { _ = "STUB: not implemented"; return "" }
 
 const (
 	OPENRUN_HOME            = "OPENRUN_HOME"
@@ -396,13 +386,7 @@ type AppPathDomain struct {
 	Domain string
 }
 
-func (a AppPathDomain) String() string {
-	if a.Domain == "" {
-		return a.Path
-	} else {
-		return a.Domain + ":" + a.Path
-	}
-}
+func (a AppPathDomain) String() string { _ = "STUB: not implemented"; return "" }
 
 // AppInfo is the basic info for an app
 type AppInfo struct {
@@ -424,35 +408,15 @@ type AppInfo struct {
 }
 
 func CreateAppPathDomain(path, domain string) AppPathDomain {
-	return AppPathDomain{
-		Path:   path,
-		Domain: domain,
-	}
+	_ = "STUB: not implemented"
+	return *new(AppPathDomain)
 }
 
 func CreateAppInfo(id AppId, name, path, domain string, isDev bool, mainApp AppId,
 	auth AppAuthnType, sourceUrl string, spec AppSpec,
 	version int, gitSha, gitMessage, branch, starBase string, updatedAt time.Time, retainVersions int) AppInfo {
-	return AppInfo{
-		AppPathDomain: AppPathDomain{
-			Path:   path,
-			Domain: domain,
-		},
-		Name:           name,
-		Id:             id,
-		IsDev:          isDev,
-		MainApp:        mainApp,
-		Auth:           auth,
-		SourceUrl:      sourceUrl,
-		Spec:           spec,
-		Version:        version,
-		GitSha:         gitSha,
-		GitMessage:     gitMessage,
-		Branch:         branch,
-		StarBase:       starBase,
-		UpdateTime:     updatedAt,
-		RetainVersions: retainVersions,
-	}
+	_ = "STUB: not implemented"
+	return *new(AppInfo)
 }
 
 // Permission represents a permission granted to an app to run
@@ -502,19 +466,11 @@ type AppEntry struct {
 	Metadata   AppMetadata `json:"metadata"` // metadata is version controlled
 }
 
-func (ae *AppEntry) String() string {
-	if ae.Domain == "" {
-		return ae.Path
-	} else {
-		return ae.Domain + ":" + ae.Path
-	}
-}
+func (ae *AppEntry) String() string { _ = "STUB: not implemented"; return "" }
 
 func (ae *AppEntry) AppPathDomain() AppPathDomain {
-	return AppPathDomain{
-		Path:   ae.Path,
-		Domain: ae.Domain,
-	}
+	_ = "STUB: not implemented"
+	return *new(AppPathDomain)
 }
 
 // AppMetadata contains the configuration for an app. App configurations are version controlled.
@@ -565,33 +521,9 @@ const (
 // SpecFiles is a map of file names to file data. JSON encoding uses base 64 encoding of file text
 type SpecFiles map[string]string
 
-func (t *SpecFiles) UnmarshalJSON(data []byte) error {
-	encodedData := map[string]string{}
-	if err := json.Unmarshal(data, &encodedData); err != nil {
-		return err
-	}
+func (t *SpecFiles) UnmarshalJSON(data []byte) error { _ = "STUB: not implemented"; return nil }
 
-	decoded := map[string]string{}
-	for name, encodedData := range encodedData {
-		decodedData, err := base64.StdEncoding.DecodeString(encodedData)
-		if err != nil {
-			return err
-		}
-		decoded[name] = string(decodedData)
-	}
-
-	*t = SpecFiles(decoded)
-	return nil
-}
-
-func (t *SpecFiles) MarshalJSON() ([]byte, error) {
-	encoded := map[string]string{}
-	for name, decodedData := range *t {
-		encoded[name] = base64.StdEncoding.EncodeToString([]byte(decodedData))
-	}
-
-	return json.Marshal(encoded)
-}
+func (t *SpecFiles) MarshalJSON() ([]byte, error) { _ = "STUB: not implemented"; return nil, nil }
 
 // AccountLink links the account to use for each plugin
 type AccountLink struct {
@@ -646,19 +578,9 @@ type Transaction struct {
 	*sql.Tx
 }
 
-func (t *Transaction) IsInitialized() bool {
-	return t.Tx != nil
-}
+func (t *Transaction) IsInitialized() bool { _ = "STUB: not implemented"; return false }
 
-func StripQuotes(s string) string {
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
-	}
-	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
-		return s[1 : len(s)-1]
-	}
-	return s
-}
+func StripQuotes(s string) string { _ = "STUB: not implemented"; return "" }
 
 // StyleType is the type of style library used by the app
 type StyleType string
@@ -707,22 +629,11 @@ const (
 
 const REGEX_PREFIX = "regex:"
 
-func RegexMatch(perm, entry string) (bool, error) {
-	if len(perm) <= 6 || !strings.HasPrefix(perm, REGEX_PREFIX) {
-		return false, nil
-	}
-	perm = perm[6:]
-	return regexp.MatchString(perm, entry)
-}
+func RegexMatch(perm, entry string) (bool, error) { _ = "STUB: not implemented"; return false, nil }
 
 func GetAppUrl(appPathDomain AppPathDomain, serverConfig *ServerConfig) string {
-	useHttps := serverConfig.Https.Port > 0
-	domain := cmp.Or(appPathDomain.Domain, serverConfig.System.DefaultDomain)
-	if useHttps {
-		return fmt.Sprintf("https://%s:%d%s", domain, serverConfig.Https.Port, appPathDomain.Path)
-	} else {
-		return fmt.Sprintf("http://%s:%d%s", domain, serverConfig.Http.Port, appPathDomain.Path)
-	}
+	_ = "STUB: not implemented"
+	return ""
 }
 
 type DryRun bool

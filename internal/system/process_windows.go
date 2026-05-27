@@ -8,16 +8,9 @@ package system
 import (
 	"os"
 	"os/exec"
-	"syscall"
 )
 
 // SetProcessGroup sets the process group flag for the command
-func SetProcessGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
-	}
-}
+func SetProcessGroup(cmd *exec.Cmd) { _ = "STUB: not implemented"; return }
 
-func KillGroup(process *os.Process) error {
-	return process.Kill()
-}
+func KillGroup(process *os.Process) error { _ = "STUB: not implemented"; return nil }

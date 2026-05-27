@@ -6,24 +6,10 @@
 package plugins
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"io"
-	"mime/multipart"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/openrundev/openrun/internal/app"
-	"github.com/openrundev/openrun/internal/app/apptype"
-	"github.com/openrundev/openrun/internal/app/starlark_type"
 	"github.com/openrundev/openrun/internal/plugin"
 	"github.com/openrundev/openrun/internal/types"
 	"go.starlark.net/starlark"
@@ -31,9 +17,7 @@ import (
 )
 
 // AsString unquotes a starlark string value
-func AsString(x starlark.Value) (string, error) {
-	return strconv.Unquote(x.String())
-}
+func AsString(x starlark.Value) (string, error) { _ = "STUB: not implemented"; return "", nil }
 
 // Encodings for form data.
 //
@@ -63,433 +47,101 @@ type httpPlugin struct {
 }
 
 func NewHttpPlugin(pluginContext *types.PluginContext) (any, error) {
-	return &httpPlugin{client: http.DefaultClient}, nil
+	_ = "STUB: not implemented"
+	return *new(any), nil
 }
 
 func (h *httpPlugin) Get(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("get")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (h *httpPlugin) Head(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("head")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (h *httpPlugin) Options(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("options")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (h *httpPlugin) Post(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("post")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (h *httpPlugin) Put(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("put")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (h *httpPlugin) Delete(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("delete")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (h *httpPlugin) Patch(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	httpFunc := h.reqMethod("patch")
-	return httpFunc(thread, builtin, args, kwargs)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 // reqMethod is a factory function for generating starlark builtin functions for different http request methods
 func (h *httpPlugin) reqMethod(method string) func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		var (
-			urlv         starlark.String
-			params       = &starlark.Dict{}
-			headers      = &starlark.Dict{}
-			formBody     = &starlark.Dict{}
-			signAuth     = &starlark.Dict{}
-			formEncoding starlark.String
-			basicAuth    starlark.Tuple
-			body         starlark.String
-			jsonBody     starlark.Value
-			errorOnFail  = starlark.True
-			timeout      = starlark.MakeInt(defaultTimeoutSeconds)
-		)
-
-		if err := starlark.UnpackArgs(method, args, kwargs, "url", &urlv, "params?", &params, "headers",
-			&headers, "body", &body, "form_body", &formBody, "form_encoding", &formEncoding,
-			"json_body", &jsonBody, "auth_basic", &basicAuth, "auth_signature", &signAuth,
-			"error_on_fail", &errorOnFail, "timeout", &timeout); err != nil {
-			return nil, err
-		}
-
-		rawurl, err := AsString(urlv)
-		if err != nil {
-			return nil, err
-		}
-
-		if strings.HasPrefix(rawurl, apptype.CONTAINER_URL) {
-			// If the url starts with the container url, we need to replace it with the container proxy url
-			rawurl = strings.TrimPrefix(rawurl, apptype.CONTAINER_URL)
-			containerProxyUrl := thread.Local(types.TL_CONTAINER_URL)
-			containerProxyUrlStr, ok := containerProxyUrl.(string)
-			if !ok || containerProxyUrlStr == "" {
-				return nil, fmt.Errorf("container proxy url not set")
-			}
-			rawurl = containerProxyUrlStr + rawurl
-		}
-
-		if err = setQueryParams(&rawurl, params); err != nil {
-			return nil, err
-		}
-
-		timeoutSeconds, ok := timeout.Int64()
-		if !ok || timeoutSeconds <= 0 {
-			return nil, fmt.Errorf("timeout must be a positive integer number of seconds")
-		}
-
-		ctx := app.GetContext(thread)
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-		cancelOnError := true
-		defer func() {
-			if cancelOnError {
-				cancel()
-			}
-		}()
-		req, err := http.NewRequestWithContext(requestCtx, strings.ToUpper(method), rawurl, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		if err = setHeaders(req, headers); err != nil {
-			return nil, err
-		}
-		if err = setBasicAuth(req, basicAuth); err != nil {
-			return nil, err
-		}
-
-		if err = setBody(req, body, formBody, formEncoding, jsonBody); err != nil {
-			return nil, err
-		}
-
-		if signAuth.Len() > 0 {
-			if err = setSignAuth(req, signAuth); err != nil {
-				return nil, err
-			}
-		}
-
-		res, err := h.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		if errorOnFail && (res.StatusCode < 200 || res.StatusCode >= 300) { // 1xx and 3xx are also failed by default
-			res.Body.Close() //nolint:errcheck
-			return nil, fmt.Errorf("http request failed with status code %d: %s", res.StatusCode, res.Status)
-		}
-
-		r := &Response{
-			Response:   *res,
-			thread:     thread,
-			cleanupKey: fmt.Sprintf("response_body_%p", res.Body),
-			cancel:     cancel,
-		}
-		app.DeferCleanup(thread, r.cleanupKey, func() error {
-			return r.cleanupBody(false)
-		}, false)
-		cancelOnError = false
-		return app.NewResponse(r.Struct()), nil
-	}
+	_ = "STUB: not implemented"
+	return nil
 }
 
+// If the url starts with the container url, we need to replace it with the container proxy url
+
+// 1xx and 3xx are also failed by default
+//nolint:errcheck
+
 func setQueryParams(rawurl *string, params *starlark.Dict) error {
-	keys := params.Keys()
-	if len(keys) == 0 {
-		return nil
-	}
-
-	u, err := url.Parse(*rawurl)
-	if err != nil {
-		return err
-	}
-
-	q := u.Query()
-	for _, key := range keys {
-		keystr, err := AsString(key)
-		if err != nil {
-			return err
-		}
-
-		val, _, err := params.Get(key)
-		if err != nil {
-			return err
-		}
-		if val.Type() != "string" {
-			return fmt.Errorf("expected param value for key '%s' to be a string. got: '%s'", key, val.Type())
-		}
-		valstr, err := AsString(val)
-		if err != nil {
-			return err
-		}
-
-		q.Set(keystr, valstr)
-	}
-	if q.Encode() != "" {
-		u.RawQuery = q.Encode()
-	}
-	*rawurl = u.String()
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func setBasicAuth(req *http.Request, auth starlark.Tuple) error {
-	if len(auth) == 0 {
-		return nil
-	} else if len(auth) == 2 {
-		username, err := AsString(auth[0])
-		if err != nil {
-			return fmt.Errorf("parsing auth username string: %s", err.Error())
-		}
-		password, err := AsString(auth[1])
-		if err != nil {
-			return fmt.Errorf("parsing auth password string: %s", err.Error())
-		}
-		req.SetBasicAuth(username, password)
-		return nil
-	}
-	return fmt.Errorf("expected two values for auth params tuple")
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func getKeyAsString(dict *starlark.Dict, key string) (string, error) {
-	val, ok, err := dict.Get(starlark.String(key))
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", fmt.Errorf("key %s not found", key)
-	}
-	return AsString(val)
+	_ = "STUB: not implemented"
+	return "", nil
 }
 
 func setSignAuth(req *http.Request, auth *starlark.Dict) error {
-	signType, err := getKeyAsString(auth, "type")
-	if err != nil {
-		return err
-	}
-	userId, err := getKeyAsString(auth, "user")
-	if err != nil {
-		return err
-	}
-	apiKey, err := getKeyAsString(auth, "api_key")
-	if err != nil {
-		return err
-	}
-
-	var authHeaders map[string]string
-	switch signType {
-	case "SL":
-		authHeaders, err = createSLAuthHeader(req, userId, apiKey)
-		if err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown auth type: %s", signType)
-	}
-	for key, val := range authHeaders {
-		req.Header.Set(key, val)
-	}
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func createSLAuthHeader(req *http.Request, userId, apiKey string) (map[string]string, error) {
-	parsedUrl, err := url.Parse(req.URL.String())
-	if err != nil {
-		return nil, err
-	}
-
-	host, _, err := net.SplitHostPort(parsedUrl.Host)
-	if err != nil {
-		host = parsedUrl.Host
-	}
-	pathQS := parsedUrl.Path
-	if parsedUrl.RawQuery != "" {
-		pathQS = fmt.Sprintf("%s?%s", pathQS, parsedUrl.RawQuery)
-	}
-
-	if strings.Contains(host, ":") {
-		// If IPv6 address, unescape the % chars if present and add square brackets
-		unescapedHost, err := url.PathUnescape(host)
-		if err != nil {
-			return nil, err
-		}
-
-		host = fmt.Sprintf("[%s]", unescapedHost)
-	}
-
-	headerKeys := make([]string, 0, len(req.Header))
-	headerValues := make([]string, 0, len(req.Header))
-
-	hasDate := false
-	for k, v := range req.Header {
-		if len(v) == 0 {
-			continue
-		}
-		lowerKey := strings.ToLower(k)
-		if lowerKey == "referer" {
-			// Referer header is not include in signature
-			continue
-		}
-		headerKeys = append(headerKeys, lowerKey)
-		headerValues = append(headerValues, strings.ToLower(v[0]))
-		if lowerKey == "date" {
-			hasDate = true
-		}
-	}
-
-	retHeaders := map[string]string{}
-	if !hasDate {
-		// Add date header if not already present
-		headerKeys = append(headerKeys, "date")
-		dateValue := time.Now().Format(time.RFC1123)
-		headerValues = append(headerValues, dateValue)
-		retHeaders["date"] = dateValue
-	}
-
-	unhashedSig := fmt.Sprintf("%s%s;%s;%s",
-		host, pathQS, strings.Join(headerValues, ";"), apiKey)
-	sha256 := fmt.Sprintf("%s", sha256.Sum256([]byte(unhashedSig)))
-	hashedSig := base64.StdEncoding.EncodeToString([]byte(sha256))
-
-	authHeader := fmt.Sprintf("SLSignature keyId=%s, headers=%s, %s", userId, strings.Join(headerKeys, ";"), hashedSig)
-	retHeaders["Authorization"] = authHeader
-	return retHeaders, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
+// If IPv6 address, unescape the % chars if present and add square brackets
+
+// Referer header is not include in signature
+
+// Add date header if not already present
+
 func setHeaders(req *http.Request, headers *starlark.Dict) error {
-	keys := headers.Keys()
-	if len(keys) == 0 {
-		return nil
-	}
-
-	for _, key := range keys {
-		keystr, err := AsString(key)
-		if err != nil {
-			return err
-		}
-
-		val, _, err := headers.Get(key)
-		if err != nil {
-			return err
-		}
-		if val.Type() != "string" {
-			return fmt.Errorf("expected param value for key '%s' to be a string. got: '%s'", key, val.Type())
-		}
-		valstr, err := AsString(val)
-		if err != nil {
-			return err
-		}
-
-		req.Header.Add(keystr, valstr)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func setBody(req *http.Request, body starlark.String, formData *starlark.Dict, formEncoding starlark.String, jsondata starlark.Value) error {
-	if !starlark_type.IsEmptyStarlarkString(body) {
-		uq, err := strconv.Unquote(body.String())
-		if err != nil {
-			return err
-		}
-		req.Body = io.NopCloser(strings.NewReader(uq))
-		// Specifying the Content-Length ensures that https://go.dev/src/net/http/transfer.go doesnt specify Transfer-Encoding: chunked which is not supported by some endpoints.
-		// This is required when using ioutil.NopCloser method for the request body (see ShouldSendChunkedRequestBody() in the library mentioned above).
-		req.ContentLength = int64(len(uq))
-
-		return nil
-	}
-
-	if jsondata != nil && jsondata.String() != "" {
-		req.Header.Set("Content-Type", "application/json")
-
-		v, err := starlark_type.UnmarshalStarlark(jsondata)
-		if err != nil {
-			return err
-		}
-		data, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		req.Body = io.NopCloser(bytes.NewBuffer(data))
-		req.ContentLength = int64(len(data))
-	}
-
-	if formData != nil && formData.Len() > 0 {
-		form := url.Values{}
-		for _, key := range formData.Keys() {
-			keystr, err := AsString(key)
-			if err != nil {
-				return err
-			}
-
-			val, _, err := formData.Get(key)
-			if err != nil {
-				return err
-			}
-			if val.Type() != "string" {
-				return fmt.Errorf("expected param value for key '%s' to be a string. got: '%s'", key, val.Type())
-			}
-			valstr, err := AsString(val)
-			if err != nil {
-				return err
-			}
-
-			form.Add(keystr, valstr)
-		}
-
-		var contentType string
-		switch formEncoding {
-		case formEncodingURL, "":
-			contentType = formEncodingURL
-			req.Body = io.NopCloser(strings.NewReader(form.Encode()))
-			req.ContentLength = int64(len(form.Encode()))
-
-		case formEncodingMultipart:
-			var b bytes.Buffer
-			mw := multipart.NewWriter(&b)
-			defer mw.Close() //nolint:errcheck
-
-			contentType = mw.FormDataContentType()
-
-			for k, values := range form {
-				for _, v := range values {
-					w, err := mw.CreateFormField(k)
-					if err != nil {
-						return err
-					}
-					if _, err := w.Write([]byte(v)); err != nil {
-						return err
-					}
-				}
-			}
-
-			req.Body = io.NopCloser(&b)
-
-		default:
-			return fmt.Errorf("unknown form encoding: %s", formEncoding)
-		}
-
-		if req.Header.Get("Content-Type") == "" {
-			req.Header.Set("Content-Type", contentType)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
+
+// Specifying the Content-Length ensures that https://go.dev/src/net/http/transfer.go doesnt specify Transfer-Encoding: chunked which is not supported by some endpoints.
+// This is required when using ioutil.NopCloser method for the request body (see ShouldSendChunkedRequestBody() in the library mentioned above).
+
+//nolint:errcheck
 
 // Response represents an HTTP response, wrapping a go http.Response with
 // starlark methods
@@ -500,79 +152,26 @@ type Response struct {
 	cancel     context.CancelFunc
 }
 
-func (r *Response) cleanupBody(clearCleanup bool) error {
-	if clearCleanup && r.thread != nil && r.cleanupKey != "" {
-		app.ClearCleanup(r.thread, r.cleanupKey)
-		r.cleanupKey = ""
-	}
-
-	var err error
-	if r.Body != nil {
-		err = r.Body.Close()
-		r.Body = nil
-	}
-	if r.cancel != nil {
-		r.cancel()
-		r.cancel = nil
-	}
-	return err
-}
+func (r *Response) cleanupBody(clearCleanup bool) error { _ = "STUB: not implemented"; return nil }
 
 // Struct turns a response into a *starlark.Struct
-func (r *Response) Struct() *starlarkstruct.Struct {
-	return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
-		"url":         starlark.String(r.Request.URL.String()),
-		"status_code": starlark.MakeInt(r.StatusCode),
-		"headers":     r.HeadersDict(),
-		"encoding":    starlark.String(strings.Join(r.TransferEncoding, ",")),
-
-		"body": starlark.NewBuiltin("body", r.Text),
-		"json": starlark.NewBuiltin("json", r.JSON),
-	})
-}
+func (r *Response) Struct() *starlarkstruct.Struct { _ = "STUB: not implemented"; return nil }
 
 // HeadersDict flops
-func (r *Response) HeadersDict() *starlark.Dict {
-	d := new(starlark.Dict)
-	for key, vals := range r.Header {
-		if err := d.SetKey(starlark.String(key), starlark.String(strings.Join(vals, ","))); err != nil {
-			panic(err)
-		}
-	}
-	return d
-}
+func (r *Response) HeadersDict() *starlark.Dict { _ = "STUB: not implemented"; return nil }
 
 // Text returns the raw data as a string
 func (r *Response) Text(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
-	}
-	if err := r.cleanupBody(true); err != nil {
-		return nil, err
-	}
-	// reset reader to allow multiple calls
-	r.Body = io.NopCloser(bytes.NewReader(data))
-
-	return starlark.String(string(data)), nil
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
+
+// reset reader to allow multiple calls
 
 // JSON attempts to parse the response body as JSON
 func (r *Response) JSON(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var data interface{}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, err
-	}
-	if err := r.cleanupBody(true); err != nil {
-		return nil, err
-	}
-	// reset reader to allow multiple calls
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	return starlark_type.MarshalStarlark(data)
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
+
+// reset reader to allow multiple calls

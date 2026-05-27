@@ -26,20 +26,7 @@ type HtmxConfig struct {
 // file is not present. The config file load order is
 //
 //	DefaultCodeConfig -> StarlarkCodeConfig
-func NewCodeConfig() *CodeConfig {
-	return &CodeConfig{
-		Routing: RouteConfig{
-			TemplateLocations: []string{"*.go.html"},
-			BaseTemplates:     "base_templates",
-			PushEvents:        false,
-			EarlyHints:        true,
-			ContainerExclude:  []string{"static/**/*", "static_root/**/*", "base_templates/**/*", "*.go.html", "*.star", "config_gen.lock"},
-		},
-		Htmx: HtmxConfig{
-			Version: "2.0.3",
-		},
-	}
-}
+func NewCodeConfig() *CodeConfig { _ = "STUB: not implemented"; return nil }
 
 // NewCompatibleCodeConfig creates an CodeConfig focused on maintaining backward compatibility.
 // This is used when the app is created from a source url where the source has the config lock file
@@ -52,8 +39,4 @@ func NewCodeConfig() *CodeConfig {
 // Removing the lock file will result in new config defaults getting applied, which can be
 // done when the app developer wants to do an application refresh. Refresh will require additional
 // testing to ensure that UI functionality is not changed..
-func NewCompatibleCodeConfig() *CodeConfig {
-	config := NewCodeConfig()
-	config.Htmx.Version = "1.9.1"
-	return config
-}
+func NewCompatibleCodeConfig() *CodeConfig { _ = "STUB: not implemented"; return nil }

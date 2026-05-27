@@ -4,23 +4,9 @@
 package metadata
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io/fs"
-	"os"
-	"slices"
-	"strings"
-	"sync"
-	"time"
 
-	"github.com/andybalholm/brotli"
-	"github.com/openrundev/openrun/internal/app/appfs"
-	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -44,42 +30,12 @@ type FileStore struct {
 }
 
 func NewFileStore(appId types.AppId, version int, metadata *Metadata, tx types.Transaction) (*FileStore, error) {
-	var fileCache *FileCache
-	var err error
-	if metadata.dbType != system.DB_TYPE_SQLITE {
-		fileCache, err = InitFileCache(metadata.Logger, metadata.config)
-		if err != nil {
-			return nil, fmt.Errorf("error initializing file cache: %w", err)
-		}
-	}
-	return &FileStore{appId: appId, version: version, metadata: metadata, db: metadata.db, initTx: tx, fileCache: fileCache}, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (f *FileStore) IncrementAppVersion(ctx context.Context, tx types.Transaction, metadata *types.AppMetadata) error {
-	currentVersion := metadata.VersionMetadata.Version
-	nextVersion, err := f.GetHighestVersion(ctx, tx, f.appId)
-	if err != nil {
-		return fmt.Errorf("error getting highest version: %w", err)
-	}
-	nextVersion++
-
-	metadata.VersionMetadata.PreviousVersion = currentVersion
-	metadata.VersionMetadata.Version = nextVersion
-	metadataJson, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_versions (appid, previous_version, version, metadata, user_id, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")"),
-		f.appId, currentVersion, nextVersion, metadataJson, defaultUser); err != nil {
-		return fmt.Errorf("error inserting app version: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_files (appid, version, name, sha, uncompressed_size, create_time) select appid, ?, name, sha, uncompressed_size, `+system.FuncNow(f.metadata.dbType)+" from app_files where appid = ? and version = ?"),
-		nextVersion, f.appId, currentVersion); err != nil {
-		return fmt.Errorf("error copying app files: %w", err)
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
@@ -94,430 +50,100 @@ type fileEntry struct {
 }
 
 func (f *FileStore) AddAppVersionDisk(ctx context.Context, tx types.Transaction, metadata types.AppMetadata, checkoutDir string) error {
-	metadataJson, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_versions (appid, previous_version, version, metadata, user_id, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")"),
-		f.appId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, defaultUser); err != nil {
-		return fmt.Errorf("error inserting app version: %w", err)
-	}
-
-	if checkoutDir == types.NO_SOURCE {
-		return nil
-	}
-
-	fsys := os.DirFS(checkoutDir)
-
-	// Collect all file paths first
-	var filePaths []string
-	if err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, inErr error) error {
-		if inErr != nil {
-			return fmt.Errorf("file walk on %s failed for path %s: %w", checkoutDir, path, inErr)
-		}
-		if d.IsDir() && path == ".git" {
-			return fs.SkipDir
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("symlinks are not allowed in app sources: %s", path)
-		}
-		cleanPath, err := system.CleanRelativePath(path)
-		if err != nil {
-			return fmt.Errorf("invalid app source path %s: %w", path, err)
-		}
-		filePaths = append(filePaths, cleanPath)
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	if len(filePaths) == 0 {
-		return nil
-	}
-
-	// Build set of existing SHAs in the files table
-	existingSHAs := make(map[string]struct{})
-	rows, err := tx.QueryContext(ctx, "SELECT sha FROM files")
-	if err != nil {
-		return fmt.Errorf("error querying existing shas: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var sha string
-		if err := rows.Scan(&sha); err != nil {
-			return fmt.Errorf("error scanning sha: %w", err)
-		}
-		existingSHAs[sha] = struct{}{}
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("error closing sha rows: %w", err)
-	}
-
-	// Prepare insert statements upfront
-	insertFileStmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType,
-		system.InsertIgnorePrefix(f.metadata.dbType)+" into files (sha, compression_type, content, create_time) values (?, ?, ?, "+
-			system.FuncNow(f.metadata.dbType)+") "+system.InsertIgnoreSuffix(f.metadata.dbType)))
-	if err != nil {
-		return err
-	}
-	defer insertFileStmt.Close() //nolint:errcheck
-
-	insertAppFileStmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType,
-		`insert into app_files (appid, version, name, sha, uncompressed_size, create_time) values (?, ?, ?, ?, ?, `+
-			system.FuncNow(f.metadata.dbType)+")"))
-	if err != nil {
-		return err
-	}
-	defer insertAppFileStmt.Close() //nolint:errcheck
-
-	numWorkers := f.metadata.config.System.FileWorkers
-	if numWorkers <= 0 {
-		numWorkers = 4
-	}
-
-	// done is closed on early return to unblock goroutines and prevent leaks.
-	done := make(chan struct{})
-	// work feeds paths to workers, results is bounded to numWorkers
-	// so at most numWorkers compressed files are held in memory at once.
-	work := make(chan string, numWorkers)
-	results := make(chan fileEntry, numWorkers)
-	var wg sync.WaitGroup
-
-	go func() {
-		defer close(work)
-		for _, p := range filePaths {
-			select {
-			case work <- p:
-			case <-done:
-				return
-			}
-		}
-	}()
-
-	for range min(numWorkers, len(filePaths)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for path := range work {
-				buf, readErr := fs.ReadFile(fsys, path)
-				if readErr != nil {
-					select {
-					case results <- fileEntry{err: readErr}:
-					case <-done:
-					}
-					return
-				}
-
-				hash := sha256.Sum256(buf)
-				hashHex := hex.EncodeToString(hash[:])
-
-				entry := fileEntry{
-					path:           path,
-					sha:            hashHex,
-					uncompressedSz: len(buf),
-				}
-
-				if _, exists := existingSHAs[hashHex]; exists {
-					entry.shaExists = true
-				} else if len(buf) > COMPRESSION_THRESHOLD {
-					entry.compression = appfs.COMPRESSION_TYPE
-					var byteBuf bytes.Buffer
-					br := brotli.NewWriterLevel(&byteBuf, BROTLI_COMPRESSION_LEVEL)
-					if _, writeErr := br.Write(buf); writeErr != nil {
-						br.Close() //nolint:errcheck
-						select {
-						case results <- fileEntry{err: writeErr}:
-						case <-done:
-						}
-						return
-					}
-					if closeErr := br.Close(); closeErr != nil {
-						select {
-						case results <- fileEntry{err: closeErr}:
-						case <-done:
-						}
-						return
-					}
-					entry.compressed = byteBuf.Bytes()
-				} else {
-					entry.compressed = buf
-				}
-
-				select {
-				case results <- entry:
-				case <-done:
-					return
-				}
-			}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Consume results and insert into DB as they arrive
-	for entry := range results {
-		if entry.err != nil {
-			close(done)
-			return entry.err
-		}
-		if !entry.shaExists {
-			if _, err := insertFileStmt.ExecContext(ctx, entry.sha, entry.compression, entry.compressed); err != nil {
-				close(done)
-				return fmt.Errorf("error inserting file: %w", err)
-			}
-		}
-		if _, err := insertAppFileStmt.ExecContext(ctx, f.appId, metadata.VersionMetadata.Version, entry.path, entry.sha, entry.uncompressedSz); err != nil {
-			close(done)
-			return fmt.Errorf("error inserting app file: %w", err)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
+
+// Collect all file paths first
+
+// Build set of existing SHAs in the files table
+
+//nolint:errcheck
+
+// Prepare insert statements upfront
+
+//nolint:errcheck
+
+//nolint:errcheck
+
+// done is closed on early return to unblock goroutines and prevent leaks.
+
+// work feeds paths to workers, results is bounded to numWorkers
+// so at most numWorkers compressed files are held in memory at once.
+
+//nolint:errcheck
+
+// Consume results and insert into DB as they arrive
 
 func (f *FileStore) GetFileBySha(sha string) ([]byte, string, error) {
-	var tx types.Transaction
-	if f.initTx.IsInitialized() {
-		tx = f.initTx
-	} else {
-		var err error
-		tx, err = f.metadata.BeginTransaction(context.Background())
-		if err != nil {
-			return nil, "", fmt.Errorf("error starting transaction: %w", err)
-		}
-		defer tx.Rollback() //nolint:errcheck
-	}
-
-	return f.GetFileByShaTx(context.Background(), tx, sha)
+	_ = "STUB: not implemented"
+	return nil, "", nil
 }
+
+//nolint:errcheck
 
 func (f *FileStore) GetFileByShaTx(ctx context.Context, tx types.Transaction, sha string) ([]byte, string, error) {
-	if f.fileCache != nil {
-		content, compressionType, err := f.fileCache.GetCachedFile(ctx, sha)
-		if err == nil {
-			f.metadata.Trace().Msgf("Got file from cache: %s", sha)
-			return content, compressionType, nil
-		}
-		if err != nil && err != sql.ErrNoRows {
-			return nil, "", fmt.Errorf("error getting cached file: %w", err)
-		}
-	}
-
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, "SELECT compression_type, content FROM files where sha = ?"))
-	if err != nil {
-		return nil, "", fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	row := stmt.QueryRow(sha)
-	var compressionType string
-	var content []byte
-	if err := row.Scan(&compressionType, &content); err != nil {
-		return nil, "", fmt.Errorf("error querying file table: %w", err)
-	}
-
-	if f.fileCache != nil {
-		f.metadata.Trace().Msgf("Adding file to cache: %s", sha)
-		err = f.fileCache.AddCache(ctx, sha, compressionType, content)
-		if err != nil {
-			return nil, "", fmt.Errorf("error adding file to cache: %w", err)
-		}
-	}
-
-	return content, compressionType, nil
+	_ = "STUB: not implemented"
+	return nil, "", nil
 }
+
+//nolint:errcheck
 
 func (f *FileStore) getFileInfo() (map[string]DbFileInfo, error) {
-	var tx types.Transaction
-	if f.initTx.IsInitialized() {
-		tx = f.initTx
-	} else {
-		var err error
-		tx, err = f.metadata.BeginTransaction(context.Background())
-		if err != nil {
-			return nil, fmt.Errorf("error starting transaction: %w", err)
-		}
-		defer tx.Rollback() //nolint:errcheck
-	}
-	return f.getFileInfoTx(context.Background(), tx)
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
 
 func (f *FileStore) getFileInfoTx(ctx context.Context, tx types.Transaction) (map[string]DbFileInfo, error) {
-	stmt, err := tx.PrepareContext(ctx, system.RebindQuery(f.metadata.dbType, `select name, sha, uncompressed_size, create_time from app_files where appid = ? and version = ?`))
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-	defer stmt.Close() //nolint:errcheck
-
-	rows, err := stmt.Query(f.appId, f.version)
-	if err != nil {
-		return nil, fmt.Errorf("error querying files: %w", err)
-	}
-	fileInfo := make(map[string]DbFileInfo)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		var name, sha string
-		var size int64
-		var modTime time.Time
-		err = rows.Scan(&name, &sha, &size, &modTime)
-		if err != nil {
-			return nil, fmt.Errorf("error querying files: %w", err)
-		}
-		fileInfo[name] = DbFileInfo{name: name, sha: sha, len: size, modTime: modTime}
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-
-	return fileInfo, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
+
+//nolint:errcheck
+
+//nolint:errcheck
 
 func (f *FileStore) GetHighestVersion(ctx context.Context, tx types.Transaction, appId types.AppId) (int, error) {
-	var maxId int
-	row := tx.QueryRowContext(ctx, system.RebindQuery(f.metadata.dbType, `select max(version) from app_versions where appid = ?`), appId)
-	if err := row.Scan(&maxId); err != nil {
-		return 0, nil // No versions found
-	}
-	return maxId, nil
+	_ = "STUB: not implemented"
+	return 0, nil
 }
 
+// No versions found
+
 func (f *FileStore) PromoteApp(ctx context.Context, tx types.Transaction, prodAppId types.AppId, metadata *types.AppMetadata) error {
-	metadataJson, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("error marshalling metadata: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, system.RebindQuery(f.metadata.dbType, `insert into app_versions (appid, previous_version, version, metadata, user_id, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")"),
-		prodAppId, metadata.VersionMetadata.PreviousVersion, metadata.VersionMetadata.Version, metadataJson, defaultUser); err != nil {
-		return err
-	}
-
-	// Use direct queries instead of prepared statements to avoid connection issues
-	selectQuery := system.RebindQuery(f.metadata.dbType, `select name, sha, uncompressed_size, create_time from app_files where appid = ? and version = ?`)
-	insertQuery := system.RebindQuery(f.metadata.dbType, `insert into app_files (appid, version, name, sha, uncompressed_size, create_time) values (?, ?, ?, ?, ?, `+system.FuncNow(f.metadata.dbType)+")")
-
-	rows, err := tx.Query(selectQuery, f.appId, f.version)
-	if err != nil {
-		return fmt.Errorf("error querying files: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	// Collect all file data first to avoid keeping the result set open
-	type fileData struct {
-		name string
-		sha  string
-		size int64
-	}
-	var files []fileData
-
-	for rows.Next() {
-		var name, sha string
-		var size int64
-		var modTime time.Time
-		err = rows.Scan(&name, &sha, &size, &modTime)
-		if err != nil {
-			return fmt.Errorf("error scanning file row: %w", err)
-		}
-		files = append(files, fileData{name: name, sha: sha, size: size})
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return fmt.Errorf("error closing rows: %w", closeErr)
-	}
-
-	// Now insert all files
-	for _, file := range files {
-		if _, err := tx.ExecContext(ctx, insertQuery, prodAppId, metadata.VersionMetadata.Version, file.name, file.sha, file.size); err != nil {
-			return fmt.Errorf("error inserting app file during promote: %w", err)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
+// Use direct queries instead of prepared statements to avoid connection issues
+
+//nolint:errcheck
+
+// Collect all file data first to avoid keeping the result set open
+
+// Now insert all files
+
 func (f *FileStore) GetAppVersions(ctx context.Context, tx types.Transaction) ([]types.AppVersion, error) {
-	rows, err := tx.Query(system.RebindQuery(f.metadata.dbType, `select version, previous_version, user_id, create_time, metadata from app_versions where appid = ? order by version asc`), f.appId)
-	if err != nil {
-		return nil, fmt.Errorf("error preparing statement: %w", err)
-	}
-
-	versions := make([]types.AppVersion, 0)
-	defer rows.Close() //nolint:errcheck
-	for rows.Next() {
-		v := types.AppVersion{}
-		var metadataStr sql.NullString
-
-		err = rows.Scan(&v.Version, &v.PreviousVersion, &v.UserId, &v.CreateTime, &metadataStr)
-		if err != nil {
-			return nil, fmt.Errorf("error querying apps: %w", err)
-		}
-
-		if metadataStr.Valid && metadataStr.String != "" {
-			err = json.Unmarshal([]byte(metadataStr.String), &v.Metadata)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-			}
-		}
-
-		versions = append(versions, v)
-	}
-
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, fmt.Errorf("error closing rows: %w", closeErr)
-	}
-
-	return versions, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
+//nolint:errcheck
+
 func (f *FileStore) GetAppVersion(ctx context.Context, tx types.Transaction, version int) (*types.AppVersion, error) {
-	row := tx.QueryRow(system.RebindQuery(f.metadata.dbType, `select version, previous_version, user_id, create_time, metadata from app_versions where appid = ? and version = ?`), f.appId, version)
-
-	v := types.AppVersion{}
-	var metadataStr sql.NullString
-
-	err := row.Scan(&v.Version, &v.PreviousVersion, &v.UserId, &v.CreateTime, &metadataStr)
-	if err != nil {
-		return nil, fmt.Errorf("error querying apps: %w", err)
-	}
-
-	if metadataStr.Valid && metadataStr.String != "" {
-		err = json.Unmarshal([]byte(metadataStr.String), &v.Metadata)
-		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling metadata: %w", err)
-		}
-	}
-
-	return &v, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (f *FileStore) GetAppFiles(ctx context.Context, tx types.Transaction) ([]types.AppFile, error) {
-	files, err := f.getFileInfoTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-
-	fileList := make([]types.AppFile, 0, len(files))
-	for _, fileInfo := range files {
-		fileList = append(fileList, types.AppFile{
-			Name: fileInfo.name,
-			Etag: fileInfo.sha,
-			Size: fileInfo.len,
-		})
-	}
-
-	slices.SortFunc(fileList, func(a, b types.AppFile) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-
-	return fileList, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func (f *FileStore) Reset() {
+	_ = "STUB: not implemented"
 	// Unlink the file store from the types.Transaction used during init
-	f.initTx = types.Transaction{}
+	return
 }

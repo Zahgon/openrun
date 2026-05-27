@@ -5,24 +5,12 @@ package app
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
-	"path"
-	"strings"
 	"sync"
-	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/openrundev/openrun/internal/app/action"
-	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
-	"github.com/openrundev/openrun/internal/system"
-	"github.com/openrundev/openrun/internal/telemetry"
-	"github.com/openrundev/openrun/internal/types"
-	"go.opentelemetry.io/otel/attribute"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -35,92 +23,20 @@ var (
 	VARY_HEADER_VALUE = []string{"HX-Request"}
 )
 
-func (a *App) earlyHints(w http.ResponseWriter, r *http.Request) {
-	sendHint := false
-	for _, f := range a.sourceFS.StaticFiles() {
-		if strings.HasSuffix(f, ".css") {
-			sendHint = true
-			w.Header().Add("Link", fmt.Sprintf("<%s>; rel=preload; as=style",
-				path.Join(a.Path, a.sourceFS.HashName(f))))
-		} else if strings.HasSuffix(f, ".js") {
-			if !strings.HasSuffix(f, "sse.js") {
-				sendHint = true
-				w.Header().Add("Link", fmt.Sprintf("<%s>; rel=preload; as=script",
-					path.Join(a.Path, a.sourceFS.HashName(f))))
-			}
-		}
-	}
+func (a *App) earlyHints(w http.ResponseWriter, r *http.Request) { _ = "STUB: not implemented"; return }
 
-	if sendHint {
-		a.Trace().Msg("Sending early hints for static files")
-		w.WriteHeader(http.StatusEarlyHints)
-	}
-}
+func (a *App) getRequestUrl(r *http.Request) string { _ = "STUB: not implemented"; return "" }
 
-func (a *App) getRequestUrl(r *http.Request) string {
-	return system.GetRequestScheme(r, a.serverConfig.Security.TrustedProxies) + "://" + r.Host
-}
-
-func defaultPortForScheme(scheme string) string {
-	switch strings.ToLower(scheme) {
-	case "http":
-		return "80"
-	case "https":
-		return "443"
-	default:
-		return ""
-	}
-}
+func defaultPortForScheme(scheme string) string { _ = "STUB: not implemented"; return "" }
 
 func sameOriginURL(refURL *url.URL, requestURL *url.URL) bool {
-	if refURL == nil || requestURL == nil {
-		return false
-	}
-	if !strings.EqualFold(refURL.Scheme, requestURL.Scheme) {
-		return false
-	}
-	if !strings.EqualFold(refURL.Hostname(), requestURL.Hostname()) {
-		return false
-	}
-	return cmp.Or(refURL.Port(), defaultPortForScheme(refURL.Scheme)) ==
-		cmp.Or(requestURL.Port(), defaultPortForScheme(requestURL.Scheme))
+	_ = "STUB: not implemented"
+	return false
 }
 
 func (a *App) validatedRefererRedirect(r *http.Request, referrer string) (string, bool) {
-	if referrer == "" {
-		return "", false
-	}
-
-	refURL, err := url.Parse(referrer)
-	if err != nil {
-		return "", false
-	}
-
-	requestURL, err := url.Parse(a.getRequestUrl(r))
-	if err != nil {
-		return "", false
-	}
-
-	switch {
-	case refURL.Scheme != "" || refURL.Host != "":
-		if refURL.Scheme == "" || refURL.Host == "" || !sameOriginURL(refURL, requestURL) {
-			return "", false
-		}
-	case !strings.HasPrefix(refURL.Path, "/"):
-		return "", false
-	}
-
-	redirectTarget := refURL.EscapedPath()
-	if redirectTarget == "" {
-		redirectTarget = "/"
-	}
-	if refURL.RawQuery != "" {
-		redirectTarget += "?" + refURL.RawQuery
-	}
-	if refURL.Fragment != "" {
-		redirectTarget += "#" + refURL.Fragment
-	}
-	return redirectTarget, true
+	_ = "STUB: not implemented"
+	return "", false
 }
 
 // pooled holds one encoder and its buffer.
@@ -140,535 +56,93 @@ var encoderPool = sync.Pool{
 }
 
 func (a *App) createHandlerFunc(fullHtml, fragment string, handler starlark.Callable, rtype string) http.HandlerFunc {
-	hasArgs := handler != nil && !strings.HasSuffix(handler.Name(), "_no_args")
-	rtype = strings.ToUpper(rtype)
-	goHandler := func(w http.ResponseWriter, r *http.Request) {
-		thread := &starlark.Thread{
-			Name:  a.Path,
-			Print: func(_ *starlark.Thread, msg string) { fmt.Println(msg) },
-		}
-
-		// Save the request context in the starlark thread local
-		thread.SetLocal(types.TL_CONTEXT, r.Context())
-		if a.containerHandler != nil {
-			thread.SetLocal(types.TL_CONTAINER_HANDLER, a.containerHandler)
-			thread.SetLocal(types.TL_CONTAINER_URL, a.containerHandler.GetProxyUrl())
-		}
-		thread.SetLocal(types.TL_APP_URL, types.GetAppUrl(a.AppPathDomain(), a.serverConfig))
-
-		header := r.Header
-		requestHeaders := header.Clone()
-		deleteOpenRunHeaders(requestHeaders)
-		setOpenRunHeaders(requestHeaders, r.Context())
-		isHtmxRequest := types.GetHTTPHeader(header, "Hx-Request") == "true" &&
-			!(types.GetHTTPHeader(header, "Hx-Boosted") == "true") //nolint:staticcheck
-
-		if a.serverConfig.System.EarlyHints && rtype == apptype.HTML_TYPE && a.codeConfig.Routing.EarlyHints && !a.IsDev &&
-			r.Method == http.MethodGet &&
-			types.GetHTTPHeader(header, "Sec-Fetch-Mode") == "navigate" &&
-			!(isHtmxRequest && fragment != "") { //nolint:staticcheck
-			// Prod mode, for a GET request from newer browsers on a top level HTML page, send http early hints
-			a.earlyHints(w, r)
-		}
-
-		var requestData starlark_type.Request
-		if hasArgs || rtype == apptype.HTML_TYPE {
-			appPath := a.Path
-			if appPath == "/" {
-				appPath = ""
-			}
-			pagePath := r.URL.Path
-			if pagePath == "/" {
-				pagePath = ""
-			}
-			appUrl := a.getRequestUrl(r) + appPath
-			requestData = starlark_type.Request{
-				AppName:        a.Name,
-				AppPath:        appPath,
-				AppUrl:         appUrl,
-				PagePath:       pagePath,
-				PageUrl:        appUrl + pagePath,
-				Method:         r.Method,
-				IsDev:          a.IsDev,
-				IsPartial:      isHtmxRequest,
-				PushEvents:     a.codeConfig.Routing.PushEvents,
-				HtmxVersion:    a.codeConfig.Htmx.Version,
-				Headers:        requestHeaders,
-				RemoteIP:       a.getRemoteIP(r),
-				UserId:         system.GetContextUserId(r.Context()),
-				UserSubject:    system.GetContextUserSubject(r.Context()),
-				UserEmail:      system.GetContextUserEmail(r.Context()),
-				CustomPerms:    system.GetCustomPerms(r.Context()),
-				AppRBACEnabled: system.IsAppRBACEnabled(r.Context()),
-			}
-
-			chiContext := chi.RouteContext(r.Context())
-			params := map[string]string{}
-			if chiContext != nil && chiContext.URLParams.Keys != nil {
-				for i, k := range chiContext.URLParams.Keys {
-					params[k] = chiContext.URLParams.Values[i]
-				}
-			}
-			requestData.UrlParams = params
-
-			r.ParseForm() //nolint:errcheck // ignore error if no form data is passed
-			requestData.Form = r.Form
-			requestData.Query = r.URL.Query()
-			requestData.PostForm = r.PostForm
-		}
-
-		var deferredCleanup func() error
-		var handlerResponse any = map[string]any{} // no handler means empty Data map is passed into template
-		if handler != nil {
-			deferredCleanup = func() error {
-				// Check for any deferred cleanups
-				err := action.RunDeferredCleanup(thread)
-				if err != nil {
-					a.Error().Err(err).Msg("error cleaning up plugins")
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return err
-				}
-				return nil
-			}
-
-			eventStatus := types.EventStatusSuccess
-
-			if a.auditInsert != nil {
-				defer func() {
-					op := system.GetThreadLocalKey(thread, types.TL_AUDIT_OPERATION)
-					if op != "" {
-						// Audit event was set, insert it
-						event := types.AuditEvent{
-							RequestId:  system.GetContextUserId(r.Context()),
-							CreateTime: time.Now(),
-							UserId:     system.GetContextUserId(r.Context()),
-							AppId:      system.GetContextAppId(r.Context()),
-							EventType:  types.EventTypeCustom,
-							Status:     string(eventStatus),
-						}
-
-						event.Operation = op
-						event.Target = system.GetThreadLocalKey(thread, types.TL_AUDIT_TARGET)
-						event.Detail = system.GetThreadLocalKey(thread, types.TL_AUDIT_DETAIL)
-						if err := a.auditInsert(&event); err != nil {
-							a.Error().Err(err).Msg("error inserting audit event")
-						}
-					}
-				}()
-			}
-
-			defer deferredCleanup() //nolint:errcheck
-
-			// Call the handler function
-			var ret starlark.Value
-			var err error
-			if hasArgs {
-				ret, err = a.callStarlarkHandler(r, thread, handler, starlark.Tuple{requestData})
-			} else {
-				ret, err = a.callStarlarkHandler(r, thread, handler, nil)
-			}
-
-			if err == nil {
-				pluginErrLocal := thread.Local(types.TL_PLUGIN_API_FAILED_ERROR)
-				if pluginErrLocal != nil {
-					pluginErr := pluginErrLocal.(error)
-					a.Error().Err(pluginErr).Msg("handler had plugin API failure")
-					err = pluginErr // handle as if the handler had returned an error
-				}
-			}
-
-			if err != nil {
-				eventStatus = types.EventStatusFailure
-				a.Error().Err(err).Msg("error calling handler")
-
-				firstFrame := ""
-				if evalErr, ok := err.(*starlark.EvalError); ok {
-					// Iterate through the CallFrame stack for debugging information
-					for i, frame := range evalErr.CallStack {
-						a.Warn().Msgf("Function: %s, Position: %s\n", frame.Name, frame.Pos)
-						if i == 0 {
-							firstFrame = fmt.Sprintf("Function %s, Position %s", frame.Name, frame.Pos)
-						}
-					}
-				}
-
-				msg := err.Error()
-				if firstFrame != "" && a.IsDev {
-					msg = msg + " : " + firstFrame
-				}
-
-				if a.errorHandler == nil {
-					// No err handler defined, abort
-					http.Error(w, msg, http.StatusInternalServerError)
-					return
-				}
-
-				// error handler is defined, call it
-				valueDict := starlark.Dict{}
-				valueDict.SetKey(starlark.String("error"), starlark.String(msg)) //nolint:errcheck
-				ret, err = a.callStarlarkHandler(r, thread, a.errorHandler, starlark.Tuple{requestData, &valueDict})
-				if err != nil {
-					// error handler itself failed
-					firstFrame := ""
-					if evalErr, ok := err.(*starlark.EvalError); ok {
-						// Iterate through the CallFrame stack for debugging information
-						for i, frame := range evalErr.CallStack {
-							a.Warn().Msgf("Function: %s, Position: %s\n", frame.Name, frame.Pos)
-							if i == 0 {
-								firstFrame = fmt.Sprintf("Function %s, Position %s", frame.Name, frame.Pos)
-							}
-						}
-					}
-
-					msg := err.Error()
-					if firstFrame != "" && a.IsDev {
-						msg = msg + " : " + firstFrame
-					}
-					http.Error(w, msg, http.StatusInternalServerError)
-					return
-				}
-			}
-
-			retStruct, ok := ret.(*starlarkstruct.Struct)
-			if ok {
-				// response type struct returned by handler Instead of template defined in
-				// the route, use the template specified in the response
-				done, err := a.handleResponse(retStruct, r, w, requestData, rtype, deferredCleanup)
-				if done {
-					return
-				}
-
-				http.Error(w, fmt.Sprintf("Error handling response: %s", err), http.StatusInternalServerError)
-				return
-			}
-
-			if ret != nil {
-				// Response from handler, or if handler failed, response from error_handler if defined
-				handlerResponse, err = starlark_type.UnmarshalStarlark(ret)
-				if err != nil {
-					a.Error().Err(err).Msg("error converting response")
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			}
-		}
-
-		if deferredCleanup != nil {
-			if deferredCleanup() != nil {
-				return
-			}
-		}
-
-		respHeader := w.Header()
-		respHeader["Vary"] = VARY_HEADER_VALUE
-		respHeader["Server"] = SERVER_NAME
-
-		streamResponse, ok := handlerResponse.(map[string]any)
-		if ok && streamResponse["is_stream"] == true {
-			a.handleStreamResponse(w, r, rtype, cmp.Or(fragment, fullHtml), streamResponse)
-			return
-		}
-
-		if rtype == apptype.JSON { //nolint:staticcheck
-			// If the route type is JSON, then return the handler response as JSON
-			respHeader["Content-Type"] = CONTENT_TYPE_JSON
-
-			encoder := encoderPool.Get().(*pooled)
-			encoder.buf.Reset()
-			err := encoder.enc.Encode(handlerResponse)
-			_, err2 := w.Write(encoder.buf.Bytes())
-			encoderPool.Put(encoder)
-			if cmp.Or(err, err2) != nil {
-				http.Error(w, cmp.Or(err, err2).Error(), http.StatusInternalServerError)
-				return
-			}
-			return
-		} else if rtype == apptype.TEXT {
-			// If the route type is TEXT, then return the handler response as text
-			respHeader["Content-Type"] = CONTENT_TYPE_TEXT
-			_, err := fmt.Fprint(w, handlerResponse)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			return
-		}
-
-		requestData.Data = handlerResponse
-		var err error
-		if isHtmxRequest && fragment != "" {
-			a.Trace().Msgf("Rendering block %s", fragment)
-			err = a.executeTemplateTraced(r, w, fullHtml, fragment, requestData)
-		} else {
-			referrer := types.GetHTTPHeader(header, "Referer")
-			isUpdateRequest := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
-			if !isHtmxRequest && isUpdateRequest && fragment != "" {
-				// If block is defined, and this is a non-GET request, then redirect to the referrer page
-				// This handles the Post/Redirect/Get pattern required if HTMX is disabled
-				if redirectTarget, ok := a.validatedRefererRedirect(r, referrer); ok {
-					a.Trace().Msgf("Redirecting to %s with code %d", redirectTarget, http.StatusSeeOther)
-					http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
-					return
-				}
-			}
-
-			a.Trace().Msgf("Rendering page %s", fullHtml)
-			err = a.executeTemplateTraced(r, w, fullHtml, "", requestData)
-		}
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	return goHandler
+	_ = "STUB: not implemented"
+	return *new(http.HandlerFunc)
 }
 
+// Save the request context in the starlark thread local
+
+//nolint:staticcheck
+
+//nolint:staticcheck
+// Prod mode, for a GET request from newer browsers on a top level HTML page, send http early hints
+
+//nolint:errcheck // ignore error if no form data is passed
+
+// no handler means empty Data map is passed into template
+
+// Check for any deferred cleanups
+
+// Audit event was set, insert it
+
+//nolint:errcheck
+
+// Call the handler function
+
+// handle as if the handler had returned an error
+
+// Iterate through the CallFrame stack for debugging information
+
+// No err handler defined, abort
+
+// error handler is defined, call it
+
+//nolint:errcheck
+
+// error handler itself failed
+
+// Iterate through the CallFrame stack for debugging information
+
+// response type struct returned by handler Instead of template defined in
+// the route, use the template specified in the response
+
+// Response from handler, or if handler failed, response from error_handler if defined
+
+//nolint:staticcheck
+// If the route type is JSON, then return the handler response as JSON
+
+// If the route type is TEXT, then return the handler response as text
+
+// If block is defined, and this is a non-GET request, then redirect to the referrer page
+// This handles the Post/Redirect/Get pattern required if HTMX is disabled
+
 func (a *App) callStarlarkHandler(r *http.Request, thread *starlark.Thread, handler starlark.Callable, args starlark.Tuple) (starlark.Value, error) {
-	if !telemetry.Enabled() {
-		return starlark.Call(thread, handler, args, nil)
-	}
-
-	ctx, span := telemetry.StartSpan(r.Context(), "openrun.app.starlark_handler",
-		attribute.String("openrun.app.id", string(a.Id)),
-		attribute.String("openrun.app.path", a.Path),
-		attribute.String("openrun.handler", handler.Name()),
-	)
-	defer span.End()
-	defer pushThreadContext(thread, ctx, r.Context())()
-
-	ret, err := starlark.Call(thread, handler, args, nil)
-	telemetry.RecordError(span, err)
-	return ret, err
+	_ = "STUB: not implemented"
+	return *new(starlark.Value), nil
 }
 
 func (a *App) executeTemplateTraced(r *http.Request, w http.ResponseWriter, fullHtml, fragment string, data any) error {
-	if !telemetry.Enabled() {
-		return a.executeTemplate(w, fullHtml, fragment, data)
-	}
-	_, span := telemetry.StartSpan(r.Context(), "openrun.app.template_render",
-		attribute.String("openrun.app.id", string(a.Id)),
-		attribute.String("openrun.app.path", a.Path),
-		attribute.String("openrun.template", fullHtml),
-		attribute.String("openrun.template.block", fragment),
-	)
-	defer span.End()
-	err := a.executeTemplate(w, fullHtml, fragment, data)
-	telemetry.RecordError(span, err)
-	return err
+	_ = "STUB: not implemented"
+	return nil
 }
 
 func (a *App) handleResponse(retStruct *starlarkstruct.Struct, r *http.Request, w http.ResponseWriter, requestData starlark_type.Request, rtype string, deferredCleanup func() error) (bool, error) {
+	_ = "STUB: not implemented"
 	// Handle ace.redirect type struct returned by handler
-	url, err := apptype.GetStringAttr(retStruct, "url")
-	// starlark Type() is not implemented for structs, so we can't check the type
-	// Looked at the mandatory properties to decide on type for now
-	if err == nil {
-		// Redirect type struct returned by handler
-		code, err1 := apptype.GetIntAttr(retStruct, "code")
-		refresh, err2 := apptype.GetBoolAttr(retStruct, "refresh")
-		if err1 != nil || err2 != nil {
-			http.Error(w, "Invalid redirect response", http.StatusInternalServerError)
-		}
-
-		if refresh {
-			w.Header().Add("HX-Refresh", "true")
-		}
-		a.Trace().Msgf("Redirecting to %s with code %d", url, code)
-		if deferredCleanup != nil {
-			if err := deferredCleanup(); err != nil {
-				return false, err
-			}
-		}
-		http.Redirect(w, r, url, int(code))
-		return true, nil
-	}
-
-	// Handle ace.response type struct returned by handler
-	templateBlock, err := apptype.GetStringAttr(retStruct, "block")
-	if err != nil {
-		return false, err
-	}
-
-	data, err := retStruct.Attr("data")
-	if err != nil {
-		a.Error().Err(err).Msg("error getting data from response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-
-	responseRtype, err := apptype.GetStringAttr(retStruct, "type")
-	if err != nil {
-		a.Error().Err(err).Msg("error getting type from response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-	if responseRtype == "" {
-		// Default to the type set at the route level
-		responseRtype = rtype
-	}
-	responseRtype = strings.ToUpper(responseRtype)
-	if templateBlock == "" && responseRtype == apptype.HTML_TYPE {
-		return false, fmt.Errorf("block not defined in response and type is not json/text")
-	}
-
-	code, err := apptype.GetIntAttr(retStruct, "code")
-	if err != nil {
-		a.Error().Err(err).Msg("error getting code from response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-
-	retarget, err := apptype.GetStringAttr(retStruct, "retarget")
-	if err != nil {
-		a.Error().Err(err).Msg("error getting retarget from response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-
-	reswap, err := apptype.GetStringAttr(retStruct, "reswap")
-	if err != nil {
-		a.Error().Err(err).Msg("error getting reswap from response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-
-	redirect, err := apptype.GetStringAttr(retStruct, "redirect")
-	if err != nil {
-		a.Error().Err(err).Msg("error getting redirect from response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-
-	templateValue, err := starlark_type.UnmarshalStarlark(data)
-	if err != nil {
-		a.Error().Err(err).Msg("error converting response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-
-	if strings.ToUpper(responseRtype) == apptype.JSON {
-		if deferredCleanup != nil && deferredCleanup() != nil {
-			return true, nil
-		}
-		// If the route type is JSON, then return the handler response as JSON
-		w.Header().Set("Content-Type", "application/json")
-		err := json.NewEncoder(w).Encode(templateValue)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return true, nil
-		}
-		return true, nil
-	} else if strings.ToUpper(responseRtype) == apptype.TEXT {
-		if deferredCleanup != nil && deferredCleanup() != nil {
-			return true, nil
-		}
-		// If the route type is TEXT, then return the handler response as plain text
-		w.Header().Set("Content-Type", "text/plain")
-		_, err := fmt.Fprint(w, templateValue)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return true, nil
-		}
-		return true, nil
-	}
-
-	requestData.Data = templateValue
-	if retarget != "" {
-		w.Header().Add("HX-Retarget", retarget)
-	}
-	if reswap != "" {
-		w.Header().Add("HX-Reswap", reswap)
-	}
-	if redirect != "" {
-		w.Header().Add("HX-Redirect", redirect)
-	}
-
-	if deferredCleanup != nil && deferredCleanup() != nil {
-		return true, nil
-	}
-	w.WriteHeader(int(code))
-	err = a.executeTemplateTraced(r, w, "", templateBlock, requestData)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true, nil
-	}
-	return true, nil
+	return false, nil
 }
 
-func (a *App) getRemoteIP(r *http.Request) string {
-	if a.serverConfig == nil {
-		return system.GetClientIP(r, nil)
-	}
-	return system.GetClientIP(r, a.serverConfig.Security.TrustedProxies)
-}
+// starlark Type() is not implemented for structs, so we can't check the type
+// Looked at the mandatory properties to decide on type for now
+
+// Redirect type struct returned by handler
+
+// Handle ace.response type struct returned by handler
+
+// Default to the type set at the route level
+
+// If the route type is JSON, then return the handler response as JSON
+
+// If the route type is TEXT, then return the handler response as plain text
+
+func (a *App) getRemoteIP(r *http.Request) string { _ = "STUB: not implemented"; return "" }
 
 func (a *App) handleStreamResponse(w http.ResponseWriter, r *http.Request, rtype string, fragment string, streamResponse map[string]any) {
+	_ = "STUB: not implemented"
 	// Stream the response to the client
-	if rtype == apptype.JSON { //nolint:staticcheck
-		w.Header().Set("Content-Type", "application/json")
-	} else if rtype == apptype.TEXT {
-		w.Header().Set("Content-Type", "text/plain")
-	} else {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	}
-
-	retValue := streamResponse["value"]
-	if retValue == nil {
-		http.Error(w, "stream value is nil", http.StatusInternalServerError)
-		return
-	}
-
-	retSeq, ok := retValue.(func(yield func(any, error) bool))
-	if !ok {
-		http.Error(w, "stream value is not a sequence function", http.StatusInternalServerError)
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "response writer does not support flushing", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	for v := range retSeq {
-		if rtype == apptype.TEXT || (rtype == apptype.HTML_TYPE && (fragment == "" || fragment == "-")) {
-			vStr, ok := v.(string)
-			if !ok {
-				vStr = fmt.Sprintf("%v", v)
-			}
-			vStr = types.StripQuotes(vStr)
-			_, err := fmt.Fprint(w, vStr)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		} else if rtype == apptype.HTML_TYPE {
-			err := a.executeTemplate(w, "", fragment, v)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		} else if rtype == apptype.JSON {
-			err := json.NewEncoder(w).Encode(v)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		_, err := fmt.Fprint(w, "\n")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		flusher.Flush()
-	}
-
-	if rtype == apptype.HTML_TYPE {
-		w.Write([]byte("<!--cl_stream_end-->\n\n")) //nolint:errcheck
-		flusher.Flush()
-	}
+	return
 }
+
+//nolint:staticcheck
+
+//nolint:errcheck

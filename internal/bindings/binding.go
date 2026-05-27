@@ -5,8 +5,6 @@ package bindings
 
 import (
 	"context"
-	"fmt"
-	"slices"
 	"sync"
 
 	"github.com/openrundev/openrun/internal/types"
@@ -53,51 +51,21 @@ var (
 
 // RegisterServiceBinding registers a service binding
 func RegisterServiceBinding(name string, serviceBindingBuilder ServiceBindingBuilder) {
-	initMutex.Lock()
-	defer initMutex.Unlock()
-	ServiceBindings[name] = serviceBindingBuilder
+	_ = "STUB: not implemented"
+	return
 }
 
 func verifyKeys(inputKeys []string, requiredKeys []string, optionalKeys []string) error {
-	for _, key := range inputKeys {
-		if !slices.Contains(requiredKeys, key) && !slices.Contains(optionalKeys, key) {
-			return fmt.Errorf("unknown config key: %s", key)
-		}
-	}
-
-	for _, key := range requiredKeys {
-		if !slices.Contains(inputKeys, key) {
-			return fmt.Errorf("required config key %s is missing", key)
-		}
-	}
-
+	_ = "STUB: not implemented"
 	return nil
 }
 
 func parseGrants(grants []string, supportedGrantTypes []types.GrantType) ([]types.BindingGrant, error) {
-	parsedGrants := make([]types.BindingGrant, 0, len(grants))
-	for _, grant := range grants {
-		parsedGrant, err := types.ParseGrant(grant, supportedGrantTypes)
-		if err != nil {
-			return nil, err
-		}
-		parsedGrants = append(parsedGrants, parsedGrant)
-	}
-	return parsedGrants, nil
+	_ = "STUB: not implemented"
+	return nil, nil
 }
 
 func diffGrants(currentGrants []types.BindingGrant, newGrants []types.BindingGrant) ([]types.BindingGrant, []types.BindingGrant) {
-	revokeGrants := []types.BindingGrant{}
-	applyGrants := []types.BindingGrant{}
-	for _, appliedGrant := range currentGrants {
-		if !slices.Contains(newGrants, appliedGrant) {
-			revokeGrants = append(revokeGrants, appliedGrant)
-		}
-	}
-	for _, newGrant := range newGrants {
-		if !slices.Contains(currentGrants, newGrant) {
-			applyGrants = append(applyGrants, newGrant)
-		}
-	}
-	return revokeGrants, applyGrants
+	_ = "STUB: not implemented"
+	return nil, nil
 }

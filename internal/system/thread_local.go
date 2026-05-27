@@ -11,120 +11,39 @@ import (
 )
 
 func GetThreadLocalKey(thread *starlark.Thread, key string) string {
-	value := thread.Local(key)
-	if value == nil {
-		return ""
-	}
-
-	valueStr, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return valueStr
+	_ = "STUB: not implemented"
+	return ""
 }
 
-func GetRequestUserId(thread *starlark.Thread) string {
-	ctxVal := thread.Local(types.TL_CONTEXT)
-	if ctxVal == nil {
-		return ""
-	}
-
-	ctx, ok := ctxVal.(context.Context)
-	if !ok {
-		return ""
-	}
-
-	return GetContextUserId(ctx)
-}
+func GetRequestUserId(thread *starlark.Thread) string { _ = "STUB: not implemented"; return "" }
 
 func GetRequestContext(thread *starlark.Thread) context.Context {
-	ctxVal := thread.Local(types.TL_CONTEXT)
-	if ctxVal == nil {
-		return context.Background()
-	}
-
-	ctx, ok := ctxVal.(context.Context)
-	if !ok {
-		return context.Background()
-	}
-
-	return ctx
+	_ = "STUB: not implemented"
+	return *new(context.Context)
 }
 
-func GetRequestGroups(thread *starlark.Thread) []string {
-	ctxVal := thread.Local(types.TL_CONTEXT)
-	if ctxVal == nil {
-		return []string{}
-	}
+func GetRequestGroups(thread *starlark.Thread) []string { _ = "STUB: not implemented"; return nil }
 
-	ctx, ok := ctxVal.(context.Context)
-	if !ok {
-		return []string{}
-	}
-
-	return GetContextGroups(ctx)
-}
-
-func GetContextGroups(ctx context.Context) []string {
-	value := ctx.Value(types.GROUPS)
-	if value == nil {
-		return []string{}
-	}
-	valueStr, ok := value.([]string)
-	if !ok {
-		return []string{}
-	}
-	return valueStr
-}
+func GetContextGroups(ctx context.Context) []string { _ = "STUB: not implemented"; return nil }
 
 func GetContextValue(ctx context.Context, key types.ContextKey) string {
-	value := ctx.Value(key)
-	if value == nil {
-		return ""
-	}
-	valueStr, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return valueStr
+	_ = "STUB: not implemented"
+	return ""
 }
 
-func GetContextUserId(ctx context.Context) string {
-	return GetContextValue(ctx, types.USER_ID)
-}
+func GetContextUserId(ctx context.Context) string { _ = "STUB: not implemented"; return "" }
 
-func GetContextUserSubject(ctx context.Context) string {
-	return GetContextValue(ctx, types.USER_SUBJECT)
-}
+func GetContextUserSubject(ctx context.Context) string { _ = "STUB: not implemented"; return "" }
 
-func GetContextUserEmail(ctx context.Context) string {
-	return GetContextValue(ctx, types.USER_EMAIL)
-}
+func GetContextUserEmail(ctx context.Context) string { _ = "STUB: not implemented"; return "" }
 
-func GetContextRequestId(ctx context.Context) string {
-	return GetContextValue(ctx, types.REQUEST_ID)
-}
+func GetContextRequestId(ctx context.Context) string { _ = "STUB: not implemented"; return "" }
 
 func GetContextAppId(ctx context.Context) types.AppId {
-	return types.AppId(GetContextValue(ctx, types.APP_ID))
+	_ = "STUB: not implemented"
+	return *new(types.AppId)
 }
 
-func GetCustomPerms(ctx context.Context) []string {
-	customPerms := make([]string, 0)
-	if customPermsCtx := ctx.Value(types.CUSTOM_PERMS); customPermsCtx != nil {
-		if customPermsSlice, ok := customPermsCtx.([]string); ok {
-			customPerms = customPermsSlice
-		}
-	}
-	return customPerms
-}
+func GetCustomPerms(ctx context.Context) []string { _ = "STUB: not implemented"; return nil }
 
-func IsAppRBACEnabled(ctx context.Context) bool {
-	appRBACEnabled := false
-	if rbacEnabledCtx := ctx.Value(types.RBAC_ENABLED); rbacEnabledCtx != nil {
-		if rbacEnabledBool, ok := rbacEnabledCtx.(bool); ok {
-			appRBACEnabled = rbacEnabledBool
-		}
-	}
-	return appRBACEnabled
-}
+func IsAppRBACEnabled(ctx context.Context) bool { _ = "STUB: not implemented"; return false }

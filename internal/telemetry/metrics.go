@@ -20,9 +20,7 @@ import (
 var metricsEnabled atomic.Bool
 
 // MetricsEnabled reports whether metric instrumentation is currently active.
-func MetricsEnabled() bool {
-	return metricsEnabled.Load()
-}
+func MetricsEnabled() bool { _ = "STUB: not implemented"; return false }
 
 var (
 	dbInstrumentsOnce        sync.Once
@@ -37,196 +35,60 @@ var (
 
 // resetMetricInstruments is called from Shutdown so that a subsequent Setup
 // re-creates instruments against a fresh MeterProvider.
-func resetMetricInstruments() {
-	dbInstrumentsOnce = sync.Once{}
-	dbCallDuration = nil
-	containerInstrumentsOnce = sync.Once{}
-	containerCallDuration = nil
-	appInstrumentsOnce = sync.Once{}
-	appRequest = nil
-	appResponse = nil
-	appProxyBytes = nil
-}
+func resetMetricInstruments() { _ = "STUB: not implemented"; return }
 
 func ensureDBInstruments() metric.Float64Histogram {
-	dbInstrumentsOnce.Do(func() {
-		hist, err := Meter().Float64Histogram(
-			"openrun.db.call.duration",
-			metric.WithUnit("ms"),
-			metric.WithDescription("Duration of database driver calls in milliseconds"),
-		)
-		if err != nil {
-			return
-		}
-		dbCallDuration = hist
-	})
-	return dbCallDuration
+	_ = "STUB: not implemented"
+	return *new(metric.Float64Histogram)
 }
 
 func ensureContainerInstruments() metric.Float64Histogram {
-	containerInstrumentsOnce.Do(func() {
-		hist, err := Meter().Float64Histogram(
-			"openrun.container.call.duration",
-			metric.WithUnit("ms"),
-			metric.WithDescription("Duration of container manager calls in milliseconds"),
-		)
-		if err != nil {
-			return
-		}
-		containerCallDuration = hist
-	})
-	return containerCallDuration
+	_ = "STUB: not implemented"
+	return *new(metric.Float64Histogram)
 }
 
-func ensureAppInstruments() bool {
-	appInstrumentsOnce.Do(func() {
-		meter := Meter()
-		var err error
-		appRequest, err = meter.Int64Counter(
-			"openrun.app.request",
-			metric.WithDescription("Total app requests"),
-		)
-		if err != nil {
-			return
-		}
-		appResponse, err = meter.Int64Counter(
-			"openrun.app.response",
-			metric.WithDescription("App responses by HTTP status bucket"),
-		)
-		if err != nil {
-			appRequest = nil
-			return
-		}
-		appProxyBytes, err = meter.Int64Counter(
-			"openrun.app.proxy.bytes",
-			metric.WithUnit("By"),
-			metric.WithDescription("Bytes transferred by app reverse proxies"),
-		)
-		if err != nil {
-			appRequest = nil
-			appResponse = nil
-			return
-		}
-	})
-	return appRequest != nil && appResponse != nil && appProxyBytes != nil
-}
+func ensureAppInstruments() bool { _ = "STUB: not implemented"; return false }
 
 // RecordDBCall records the duration and outcome of a SQL driver call. It is a
 // no-op when metrics are disabled.
 func RecordDBCall(ctx context.Context, dbSystem, invoker, operation string, start time.Time, err error) {
-	if !MetricsEnabled() {
-		return
-	}
-	hist := ensureDBInstruments()
-	if hist == nil {
-		return
-	}
-	attrs := []attribute.KeyValue{
-		attribute.String("db.system", dbSystem),
-		attribute.String("openrun.db.invoker", invoker),
-		attribute.String("db.operation", operation),
-		attribute.Bool("openrun.error", err != nil),
-	}
-	hist.Record(ctx, float64(time.Since(start).Microseconds())/1000.0, metric.WithAttributes(attrs...))
+	_ = "STUB: not implemented"
+	return
 }
 
 // RecordContainerCall records the duration and outcome of a container manager
 // call. It is a no-op when metrics are disabled.
 func RecordContainerCall(ctx context.Context, kind, operation string, start time.Time, err error, extraAttrs ...attribute.KeyValue) {
-	if !MetricsEnabled() {
-		return
-	}
-	hist := ensureContainerInstruments()
-	if hist == nil {
-		return
-	}
-	attrs := []attribute.KeyValue{
-		attribute.String("openrun.container.kind", kind),
-		attribute.String("openrun.container.op", operation),
-		attribute.Bool("openrun.error", err != nil),
-	}
-	attrs = append(attrs, extraAttrs...)
-	hist.Record(ctx, float64(time.Since(start).Microseconds())/1000.0, metric.WithAttributes(attrs...))
+	_ = "STUB: not implemented"
+	return
 }
 
 // RecordAppRequest records app-level request counters. It is a no-op when
 // metrics are disabled.
 func RecordAppRequest(ctx context.Context, method string, attrs ...attribute.KeyValue) {
-	if !MetricsEnabled() || !ensureAppInstruments() {
-		return
-	}
-	totalAttrs := metricAttrs(attrs, attribute.String("openrun.request.kind", "total"))
-	appRequest.Add(ctx, 1, metric.WithAttributes(totalAttrs...))
-	switch method {
-	case "GET":
-		getAttrs := metricAttrs(attrs, attribute.String("openrun.request.kind", "get"))
-		appRequest.Add(ctx, 1, metric.WithAttributes(getAttrs...))
-	case "HEAD", "OPTIONS":
-		return
-	default:
-		updateAttrs := metricAttrs(attrs, attribute.String("openrun.request.kind", "update"))
-		appRequest.Add(ctx, 1, metric.WithAttributes(updateAttrs...))
-	}
+	_ = "STUB: not implemented"
+	return
 }
 
 // RecordAppResponse records app-level HTTP status counters. It is a no-op when
 // metrics are disabled.
 func RecordAppResponse(ctx context.Context, status int, attrs ...attribute.KeyValue) {
-	if !MetricsEnabled() || !ensureAppInstruments() {
-		return
-	}
-	statusAttrs := metricAttrs(attrs, attribute.String("openrun.response.status", statusBucket(status)))
-	appResponse.Add(ctx, 1, metric.WithAttributes(statusAttrs...))
+	_ = "STUB: not implemented"
+	return
 }
 
 // RecordAppProxyBytes records app reverse-proxy byte counters. bytesIn is
 // traffic received from the client, and bytesOut is traffic sent to the client.
 func RecordAppProxyBytes(ctx context.Context, bytesIn, bytesOut uint64, attrs ...attribute.KeyValue) {
-	if !MetricsEnabled() || !ensureAppInstruments() {
-		return
-	}
-	if bytesIn > 0 {
-		inAttrs := metricAttrs(attrs, attribute.String("openrun.proxy.direction", "in"))
-		appProxyBytes.Add(ctx, saturatingInt64(bytesIn), metric.WithAttributes(inAttrs...))
-	}
-	if bytesOut > 0 {
-		outAttrs := metricAttrs(attrs, attribute.String("openrun.proxy.direction", "out"))
-		appProxyBytes.Add(ctx, saturatingInt64(bytesOut), metric.WithAttributes(outAttrs...))
-	}
+	_ = "STUB: not implemented"
+	return
 }
 
-func statusBucket(status int) string {
-	switch {
-	case status == 401:
-		return "401"
-	case status == 403:
-		return "403"
-	case status >= 100 && status < 200:
-		return "1xx"
-	case status >= 200 && status < 300:
-		return "2xx"
-	case status >= 300 && status < 400:
-		return "3xx"
-	case status >= 400 && status < 500:
-		return "4xx"
-	case status >= 500 && status < 600:
-		return "5xx"
-	default:
-		return "unknown"
-	}
-}
+func statusBucket(status int) string { _ = "STUB: not implemented"; return "" }
 
 func metricAttrs(attrs []attribute.KeyValue, extra attribute.KeyValue) []attribute.KeyValue {
-	ret := make([]attribute.KeyValue, 0, len(attrs)+1)
-	ret = append(ret, attrs...)
-	ret = append(ret, extra)
-	return ret
+	_ = "STUB: not implemented"
+	return nil
 }
 
-func saturatingInt64(v uint64) int64 {
-	const maxInt64 = uint64(1<<63 - 1)
-	if v > maxInt64 {
-		return int64(maxInt64)
-	}
-	return int64(v)
-}
+func saturatingInt64(v uint64) int64 { _ = "STUB: not implemented"; return 0 }
